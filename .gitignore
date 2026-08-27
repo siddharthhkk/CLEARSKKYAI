@@ -1,0 +1,14 @@
+api
+# Ignore dataset archives and extracted raw data
+data/
+*.tar.gz
+*.npy
+
+# Python cache
+__pycache__/
+*.pyc
+
+# DO NOT ignore the mini demo samples
+!demo_samples/
+!weights/data/
+__pycache__/
