@@ -68,12 +68,12 @@ class ClearSkyUNet(nn.Module):
         
         # DECODER
         self.dec1 = self._up_block(512, 256)
-        self.dec2 = self._up_block(256 + 512 + 512, 128) # + skip connections
-        self.dec3 = self._up_block(128 + 256 + 256, 64)
-        self.dec4 = self._up_block(64 + 128 + 128, 64)
+        self.dec2 = self._up_block(256 + 256 + 256, 128) # + skip connections
+        self.dec3 = self._up_block(128 + 128 + 128, 64)
+        self.dec4 = self._up_block(64 + 64 + 64, 64)
         
         self.final_conv = nn.Sequential(
-            nn.ConvTranspose2d(64 + 64 + 64, 4, kernel_size=4, stride=2, padding=1),
+            nn.Conv2d(64, 4, kernel_size=3, stride=1, padding=1),
             nn.Tanh() # Output bounded to [-1, 1]
         )
 

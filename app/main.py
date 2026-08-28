@@ -80,11 +80,26 @@ selected_sar = st.sidebar.selectbox(
     format_func=lambda x: os.path.basename(x)
 )
 
-# Resolve the optical partner pair
-selected_opt = selected_sar.replace("/S1/", "/S2/").replace("\\S1\\", "\\S2\\").replace("s1_", "s2_")
-if not os.path.exists(selected_opt) and selected_opt.endswith('.tif'):
-    selected_opt = selected_opt.replace('.tif', '.TIF')
+# Resolve the optical partner pair dynamically
+selected_opt = selected_sar.replace("s1_", "s2_").replace("S1_", "S2_")
 
+# Swap directory names to locate the corresponding optical folder
+for old_dir, new_dir in [
+    ("\\sar\\", "\\optical\\"), ("/sar/", "/optical/"),
+    ("\\sar\\", "\\s2\\"), ("/sar/", "/s2/"),
+    ("\\S1\\", "\\S2\\"), ("/S1/", "/S2/"),
+    ("\\s1\\", "\\s2\\"), ("/s1/", "/s2/")
+]:
+    if old_dir in selected_opt:
+        selected_opt = selected_opt.replace(old_dir, new_dir)
+
+# Handle upper/lower case extension mismatches (.tif vs .TIF)
+if not os.path.exists(selected_opt):
+    if selected_opt.endswith('.tif') and os.path.exists(selected_opt.replace('.tif', '.TIF')):
+        selected_opt = selected_opt.replace('.tif', '.TIF')
+    elif selected_opt.endswith('.TIF') and os.path.exists(selected_opt.replace('.TIF', '.tif')):
+        selected_opt = selected_opt.replace('.TIF', '.tif')
+    
 # Load Model
 model, device = load_model()
 
@@ -94,8 +109,10 @@ if st.button("✨ Run Cloud Removal Reconstruction", type="primary"):
             # Read TIF files
             with rasterio.open(selected_sar) as src:
                 sar_raw = src.read().astype(np.float32)
+                
             with rasterio.open(selected_opt) as src:
-                opt_raw = src.read().astype(np.float32)
+                # FIX: Slice the first 4 bands (RGB + NIR) from the 13-band Sentinel-2 image
+                opt_raw = src.read()[:4, :, :].astype(np.float32)
                 
             # Normalize to [-1, 1] for Model Input
             sar_tensor = torch.from_numpy(normalize_for_display(sar_raw) * 2 - 1).unsqueeze(0).to(device)
@@ -114,17 +131,17 @@ if st.button("✨ Run Cloud Removal Reconstruction", type="primary"):
             with col1:
                 st.subheader("1. SAR (Radar)")
                 sar_disp = normalize_for_display(sar_raw[0])
-                st.image(sar_disp, caption="Cloud-Penetrating Structural Radar", use_column_width=True)
+                st.image(sar_disp, caption="Cloud-Penetrating Structural Radar", use_container_width=True)
                 
             with col2:
                 st.subheader("2. Sentinel-2 (Cloudy)")
                 opt_rgb = normalize_for_display(opt_raw[:3].transpose(1, 2, 0))
-                st.image(opt_rgb, caption="Corrupted Optical Imagery", use_column_width=True)
+                st.image(opt_rgb, caption="Corrupted Optical Imagery", use_container_width=True)
                 
             with col3:
                 st.subheader("3. ClearSky Output")
                 rec_rgb = normalize_for_display(rec_img[:3].transpose(1, 2, 0))
-                st.image(rec_rgb, caption="Reconstructed Target", use_column_width=True)
+                st.image(rec_rgb, caption="Reconstructed Target", use_container_width=True)
 
             st.divider()
             st.success("🎉 Feature fusion completed successfully!")
