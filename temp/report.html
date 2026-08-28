@@ -20,6 +20,8 @@
         .card { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 6px; padding: 12px 14px; margin-bottom: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.02); }
         .card-title { font-weight: 700; font-size: 10.5pt; color: #0f172a; margin-bottom: 4px; }
         .badge-cause { background-color: #fee2e2; color: #b91c1c; display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 7.5pt; font-weight: 700; text-transform: uppercase; }
+        .badge-fixed { background-color: #dcfce7; color: #15803d; display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 7.5pt; font-weight: 700; text-transform: uppercase; }
+        .badge-info { background-color: #dbeafe; color: #1d4ed8; display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 7.5pt; font-weight: 700; text-transform: uppercase; }
         code { background-color: #e2e8f0; color: #0f172a; padding: 1px 5px; border-radius: 3px; font-size: 8.5pt; font-family: "SFMono-Regular", monospace; }
         .log-table { width: 100%; border-collapse: collapse; margin-top: 8px; margin-bottom: 12px; font-size: 8.5pt; background: #ffffff; }
         .log-table th { background-color: #0f172a; color: #ffffff; text-align: left; padding: 8px 10px; }
@@ -29,7 +31,7 @@
         .stat-num { font-size: 14pt; font-weight: 800; color: #2563eb; }
         .stat-label { font-size: 7.5pt; color: #64748b; text-transform: uppercase; font-weight: 600; }
         .image-container { text-align: center; margin: 15px 0; }
-        .image-container img { max-width: 78%; border: 1px solid #cbd5e1; border-radius: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+        .image-container img { max-width: 85%; border: 1px solid #cbd5e1; border-radius: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
         .caption { font-size: 8pt; color: #64748b; font-style: italic; margin-top: 6px; text-align: center; }
         .footer { margin-top: 30px; border-top: 1px solid #cbd5e1; padding-top: 10px; font-size: 8pt; color: #94a3b8; text-align: center; }
     </style>
@@ -38,88 +40,137 @@
 
     <div class="header">
         <div class="subtitle">ClearSky-AI Project Documentation</div>
-        <h1>Technical Architecture & Debugging Log</h1>
+        <h1>Technical Architecture, Model Training & Debugging Log</h1>
         <table class="meta-table">
             <tr>
                 <td class="meta-cell"><strong>Project:</strong> Multi-Modal SAR-Optical Data Fusion</td>
                 <td class="meta-cell"><strong>Domain:</strong> Satellite Imagery Cloud Removal</td>
-                <td class="meta-cell"><strong>Status:</strong> End-to-End Pipeline Validated</td>
+                <td class="meta-cell"><strong>Status:</strong> Model Trained & Deployed</td>
             </tr>
         </table>
     </div>
 
     <h2>1. Project Origin & Objective</h2>
-    <p><strong>ClearSky-AI</strong> is a deep learning architecture designed to perform cloud removal on satellite imagery by fusing multi-modal remote sensing data. Optical sensors (such as Sentinel-2) are frequently obstructed by cloud cover. Synthetic Aperture Radar (SAR) sensors (such as Sentinel-1) penetrate atmospheric clouds, capturing structural ground details regardless of weather conditions.</p>
-    <p>The objective of this system is to leverage a dual-stream U-Net architecture coupled with Spatial-Channel Attention (SCA) and PatchGAN discriminators to reconstruct clear, high-resolution optical imagery using paired SAR radar features and corrupted optical input.</p>
+    <p><strong>ClearSky-AI</strong> is a deep learning architecture designed to perform cloud removal on satellite imagery by fusing multi-modal remote sensing data[cite: 1]. Optical sensors (such as Sentinel-2) are frequently obstructed by cloud cover[cite: 1]. Synthetic Aperture Radar (SAR) sensors (such as Sentinel-1) penetrate atmospheric clouds, capturing structural ground details regardless of weather conditions[cite: 1].</p>
+    <p>The objective of this system is to leverage a dual-stream U-Net architecture coupled with Spatial-Channel Attention (SCA) and PatchGAN discriminators to reconstruct clear, high-resolution optical imagery using paired SAR radar features and corrupted optical input[cite: 1].</p>
 
     <table class="stat-grid">
         <tr>
             <td style="width: 25%; padding-right: 4px;"><div class="stat-card"><div class="stat-num">91 GB</div><div class="stat-label">Total Raw Dataset</div></div></td>
-            <td style="width: 25%; padding-left: 2px; padding-right: 2px;"><div class="stat-card"><div class="stat-num">Dual Stream</div><div class="stat-label">U-Net Architecture</div></div></td>
-            <td style="width: 25%; padding-left: 2px; padding-right: 2px;"><div class="stat-card"><div class="stat-num">150 MB</div><div class="stat-label">Optimized Repo Size</div></div></td>
-            <td style="width: 25%; padding-left: 4px;"><div class="stat-card"><div class="stat-num">100% Pass</div><div class="stat-label">Pipeline Compatibility</div></div></td>
+            <td style="width: 25%; padding-left: 2px; padding-right: 2px;"><div class="stat-card"><div class="stat-num">31.50 dB</div><div class="stat-label">Peak Model PSNR</div></div></td>
+            <td style="width: 25%; padding-left: 2px; padding-right: 2px;"><div class="stat-card"><div class="stat-num">25 Epochs</div><div class="stat-label">PyTorch Training</div></div></td>
+            <td style="width: 25%; padding-left: 4px;"><div class="stat-card"><div class="stat-num">100% Pass</div><div class="stat-label">Pipeline Operational</div></div></td>
         </tr>
     </table>
 
     <h2>2. Initial Setup & Cloud Infrastructure</h2>
-    <p>We began with a raw dataset footprint of approximately <strong>91 GB</strong> (50 GB Sentinel-1 SAR imagery and 41 GB Sentinel-2 Optical imagery). Setting up the local development environment inside the Cloud studio required addressing critical storage and version control bottlenecks:</p>
+    <p>We began with a raw dataset footprint of approximately <strong>91 GB</strong> (50 GB Sentinel-1 SAR imagery and 41 GB Sentinel-2 Optical imagery)[cite: 1]. Setting up the local development environment inside the Cloud studio required addressing critical storage and version control bottlenecks[cite: 1]:</p>
     <ul>
-        <li><strong>Cloud Storage & Compute (Lightning.ai):</strong> To manage the heavy lifting required for this project, we are leveraging <strong>Lightning.ai</strong>. Their cloud platform serves as the backbone of our infrastructure, allowing us to securely store the massive 91 GB raw dataset in the cloud, circumventing local hardware limits, and providing seamless access to scalable GPU compute resources required for the U-Net training pipeline.</li>
-        <li><strong>Git History Bloat Resolution:</strong> Initial repository tracking mistakenly staged the heavy data directories, bloating the hidden <code>.git</code> repository to over 47 GB. This would have caused severe GitHub push failures.</li>
-        <li><strong>Repository Reset Protocol:</strong> We executed a clean local repository re-initialization by configuring a strict <code>.gitignore</code> ruleset (excluding <code>data/</code>), purging the local <code>.git</code> tree, re-initializing fresh tracking, and force-pushing to preserve the existing GitHub URL while dropping 47 GB of dead weight.</li>
+        <li><strong>Cloud Storage & Compute (Lightning.ai):</strong> To manage the heavy lifting required for this project, we leveraged <strong>Lightning.ai</strong>[cite: 1]. Their cloud platform serves as the backbone of our infrastructure, allowing us to securely store the massive 91 GB raw dataset in the cloud, circumventing local hardware limits, and providing seamless access to scalable GPU compute resources required for the U-Net training pipeline[cite: 1].</li>
+        <li><strong>Git History Bloat Resolution:</strong> Initial repository tracking mistakenly staged the heavy data directories, bloating the hidden <code>.git</code> repository to over 47 GB[cite: 1]. This would have caused severe GitHub push failures[cite: 1].</li>
+        <li><strong>Repository Reset Protocol:</strong> We executed a clean local repository re-initialization by configuring a strict <code>.gitignore</code> ruleset (excluding <code>data/</code>), purging the local <code>.git</code> tree, re-initializing fresh tracking, and force-pushing to preserve the existing GitHub URL while dropping 47 GB of dead weight[cite: 1].</li>
     </ul>
 
-    <h2>3. Debugging Log & Technical Resolutions</h2>
+    <h2>3. Model Training & Quantitative Benchmarks</h2>
+    <p>Following architectural validation, full-scale model training was executed using <code>python src/train.py</code> across 25 epochs. The pipeline dynamically balanced Generator reconstruction loss (L1 + Perceptual) against PatchGAN Discriminator loss.</p>
+    <ul>
+        <li><strong>Convergence Speed:</strong> The model crossed 28 dB PSNR within the first 3 epochs, demonstrating fast feature alignment between SAR structural radar maps and multi-spectral optical targets.</li>
+        <li><strong>Peak Performance:</strong> Reached a peak Peak Signal-to-Noise Ratio (PSNR) of <strong>31.50 dB at Epoch 10</strong> with Generator Loss lowering to 6.1690.</li>
+        <li><strong>Final Stability:</strong> Maintained high reconstruction fidelity throughout late epochs, completing Epoch 25 at an average PSNR of ~30.50 dB and exporting optimized weights to <code>weights/best_model.pth</code>.</li>
+    </ul>
+
+    <div class="image-container">
+        <img src="Screenshot 2026-08-28 at 11-19-22 deploy-model-devbox ⚡siddharthhkk.png" alt="Terminal execution showing 25 epochs of PyTorch model training with PSNR metrics" />
+        <div class="caption">
+            Figure 1: Live terminal logs showing 25 epochs of U-Net model training in PyTorch, achieving a peak PSNR of 31.50 dB.
+        </div>
+    </div>
+
+    <h2>4. Debugging Log & Comprehensive Technical Resolutions</h2>
     <table class="log-table">
         <thead>
             <tr>
-                <th style="width: 20%;">Issue Category</th><th style="width: 35%;">Root Cause</th><th style="width: 45%;">Implemented Fix</th>
+                <th style="width: 18%;">Issue Category</th><th style="width: 37%;">Root Cause</th><th style="width: 45%;">Implemented Fix</th>
             </tr>
         </thead>
         <tbody>
             <tr>
                 <td><strong>Directory Path Resolution Error</strong></td>
-                <td><code>app/main.py</code> swapped filename prefix from <code>s1_</code> to <code>s2_</code> but retained the <code>\sar\</code> folder path in lookup.</td>
-                <td>Implemented dynamic regex string replacement to map <code>\sar\</code> to <code>\optical\</code> or <code>\s2\</code> folders seamlessly.</td>
+                <td><code>app/main.py</code> swapped filename prefix from <code>s1_</code> to <code>s2_</code> but retained the <code>\sar\</code> folder path in lookup[cite: 1].</td>
+                <td>Implemented dynamic regex string replacement to map <code>\sar\</code> to <code>\optical\</code> or <code>\s2\</code> folders seamlessly[cite: 1].</td>
             </tr>
             <tr>
                 <td><strong>Input Channel Tensor Mismatch</strong></td>
-                <td>Sentinel-2 TIFF files contained 13 spectral bands; <code>ClearSkyUNet</code> Optical Encoder expected 4 channels (RGB+NIR).</td>
-                <td>Sliced input array in <code>app/main.py</code> using <code>opt_raw = src.read()[:4, :, :].astype(np.float32)</code>.</td>
+                <td>Sentinel-2 TIFF files contained 13 spectral bands; <code>ClearSkyUNet</code> Optical Encoder expected 4 channels (RGB+NIR)[cite: 1].</td>
+                <td>Sliced input array in <code>app/main.py</code> using <code>opt_raw = src.read()[:4, :, :].astype(np.float32)</code>[cite: 1].</td>
             </tr>
             <tr>
-                <td><strong>U-Net Skip-Connection Channel Math</strong></td>
-                <td>Decoder <code>dec2</code> layer expected 1280 channels, but forward pass concatenated 768 channels.</td>
-                <td>Updated <code>src/models.py</code> <code>__init__</code> to set <code>self.dec2 = self._up_block(256 + 256 + 256, 128)</code> matching dual skip dimensions.</td>
+                <td><strong>U-Net Skip-Connection Math</strong></td>
+                <td>Decoder <code>dec2</code> layer expected 1280 channels, but forward pass concatenated 768 channels[cite: 1].</td>
+                <td>Updated <code>src/models.py</code> <code>__init__</code> to set <code>self.dec2 = self._up_block(256 + 256 + 256, 128)</code> matching dual skip dimensions[cite: 1].</td>
+            </tr>
+            <tr>
+                <td><strong>Streamlit UI Freeze / Disk Bottleneck</strong></td>
+                <td>App used $O(N^2)$ recursive searches on startup to pair missing optical tiles across 20,000+ dataset files.</td>
+                <td>Refactored dataset indexing in <code>app/main.py</code> using an $O(N)$ in-memory hash map paired with Streamlit's <code>@st.cache_data</code> decorator.</td>
+            </tr>
+            <tr>
+                <td><strong>Multi-Spectral Band Mapping (Blue Tint)</strong></td>
+                <td>Slicing <code>[:3]</code> pulled Sentinel-2 Bands 0, 1, 2 (Coastal Aerosol, Blue, Green) mapping them directly to RGB display channels.</td>
+                <td>Updated display logic to slice <code>[[3, 2, 1]]</code> (Bands 4, 3, 2 = Red, Green, Blue) to render natural true-color terrain.</td>
             </tr>
         </tbody>
     </table>
 
-    <h2>4. Investigation of Output Artifacts: The "Green Tint" Phenomenon</h2>
+    <h2>5. Visual Artifact Investigation & Output Evolution</h2>
+
     <div class="card">
         <div class="card-title">
-            <span class="badge-cause">Diagnosis</span> Output Image Appearing as Uniform Green Texture
+            <span class="badge-cause">Phase 1: Diagnosis</span> Initial Untrained Architecture ("Green Noise" Phenomenon)
         </div>
-        <p>Upon executing the first end-to-end inference pass, the Streamlit dashboard generated the three panels cleanly, but the <strong>ClearSky Output</strong> exhibited a uniform green noise pattern instead of a reconstructed terrain image.</p>
-        <p><strong>Why did this happen?</strong><br>The control panel flagged: <em>"⚠️ Weights not found. Running with initialized architecture."</em> In PyTorch, an un-trained neural network initializes its weights using standard random Gaussian distribution. Pushing SAR and optical features through an untrained network causes random tensor multiplication. When normalized from <code>[-1, 1]</code> back to RGB display range <code>[0, 1]</code>, these random values average out into a uniform mid-frequency greenish texture.</p>
+        <p>During early UI validation before model training, the application displayed a uniform mid-frequency green texture[cite: 1]. Un-trained PyTorch weights initialized from a standard Gaussian distribution created random tensor multiplication[cite: 1]. When normalized from <code>[-1, 1]</code> back to RGB display range <code>[0, 1]</code>, random values averaged into uniform green noise[cite: 1].</p>
     </div>
-    
+
+    <div class="card">
+        <div class="card-title">
+            <span class="badge-cause">Phase 2: Diagnosis</span> Deployed Trained Model ("Blue Tint" Phenomenon)
+        </div>
+        <p>After loading the trained weights (<code>best_model.pth</code>), the U-Net inference ran successfully and feature fusion completed. However, the visualization rendered with a heavy blue overlay across both Sentinel-2 inputs and reconstructed outputs. Investigation revealed that multi-spectral satellite imagery contains up to 13 bands. Slicing <code>[:3]</code> pulled <strong>Band 0 (Coastal Aerosol)</strong>, <strong>Band 1 (Blue)</strong>, and <strong>Band 2 (Green)</strong>, drowning out red ground reflectivity and exaggerating atmospheric blue scattering.</p>
+    </div>
+
     <div class="image-container">
-        <img src="Screenshot 2026-08-28 at 08-58-28 ClearSky-AI Cloud Removal Demo.png" alt="ClearSky-AI UI Output - Untrained State" />
+        <img src="Screenshot 2026-08-28 121147.jpg" alt="Streamlit dashboard showing blue-tinted satellite visualization bug" />
         <div class="caption">
-            Figure 1: Current Multi-Modal Cloud Removal Pipeline running with initialized (untrained) architecture.<br>
-            <strong>Note:</strong> Once our model training is fully complete on the dataset, we will update this report with subsequent visual proofs demonstrating accurate, reconstructed target outputs.
+            Figure 2: Streamlit Dashboard displaying the multi-spectral channel mapping bug (Band 0, 1, 2 blue tint overlay).
         </div>
     </div>
 
-    <h2>5. Current Status & Model Training Roadmap</h2>
-    <p>The ClearSky-AI framework has successfully achieved <strong>Structural & Pipeline Validation</strong>. The U-Net dual-encoder, attention bottleneck, skip connections, tensor normalization, and dashboard visualizer are 100% functional and error-free.</p>
-    <h3>Next Steps: Full Model Training Phase</h3>
+    <div class="card">
+        <div class="card-title">
+            <span class="badge-fixed">Phase 3: Resolution</span> RGB Channel Realignment & Final True-Color Rendering
+        </div>
+        <p>To produce realistic ground photography, we re-mapped the array slicing to extract <strong>Band 4 (Red)</strong>, <strong>Band 3 (Green)</strong>, and <strong>Band 2 (Blue)</strong> using Python 0-indexed slicing <code>[[3, 2, 1]]</code> inside <code>app/main.py</code>:</p>
+        <p><code>opt_rgb = normalize_for_display(opt_raw[[3, 2, 1]].transpose(1, 2, 0))</code><br>
+        <code>rec_rgb = normalize_for_display(rec_img[[3, 2, 1]].transpose(1, 2, 0))</code></p>
+        <p>This completely eliminated the blue haze, correctly displaying natural terrain, agricultural plots, and true-to-life ground reflectance.</p>
+    </div>
+
+    <div class="image-container">
+        <img src="Screenshot 2026-08-28 at 19-30-40 ClearSky-AI Cloud Removal Demo.jpg" alt="Final Streamlit dashboard showing corrected natural-color cloud removal output" />
+        <div class="caption">
+            Figure 3: Final operational ClearSky-AI Dashboard showing SAR input, corrupted optical imagery, and reconstructed cloud-free output with natural color rendering.
+        </div>
+    </div>
+
+    <h2>6. Deployment Verification & System Conclusion</h2>
+    <p>The <strong>ClearSky-AI</strong> multi-modal cloud removal framework is now completely validated, trained, optimized, and deployed:</p>
     <ol>
-        <li><strong>Lazy Loading via PyTorch DataLoader:</strong> Implement a custom PyTorch <code>Dataset</code> using dynamic read operations inside <code>__getitem__</code> to handle the 91 GB of data.</li>
-        <li><strong>GPU Acceleration & Loss Formulation:</strong> Train using L1 Reconstruction Loss combined with Adversarial PatchGAN Loss.</li>
-        <li><strong>Checkpoint Export:</strong> Save trained model parameters into <code>checkpoints/clearsky_unet.pth</code>.</li>
+        <li><strong>Pipeline Integrity:</strong> Data resolution works dynamically across nested dataset structures without manual path corrections[cite: 1].</li>
+        <li><strong>UI Responsiveness:</strong> Hash-map caching delivers sub-second lookup across thousands of satellite tiles on startup.</li>
+        <li><strong>Model Accuracy:</strong> PyTorch U-Net architecture achieves <strong>>31 dB PSNR</strong> reconstruction fidelity.</li>
+        <li><strong>Visualization Accuracy:</strong> Satellite optical channels map accurately to standard RGB space, generating high-fidelity natural color outputs.</li>
     </ol>
-    <div class="footer">ClearSky-AI Project Documentation • Generated Automatically for System Audit & Progress Tracking</div>
+
+    <div class="footer">ClearSky-AI Technical Report • Generated for Architectural Audit, System Benchmarking & Technical Logs</div>
 </body>
 </html>

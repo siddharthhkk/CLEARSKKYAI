@@ -49,14 +49,41 @@ def load_model():
     model.eval()
     return model, device
 
+import numpy as np
+
 def normalize_for_display(img_array):
-    """Converts raw multi-band image array to [0, 1] RGB visualization."""
-    img_min, img_max = np.min(img_array), np.max(img_array)
-    if img_max > img_min:
-        img_norm = (img_array - img_min) / (img_max - img_min)
-    else:
-        img_norm = np.zeros_like(img_array)
-    return np.clip(img_norm, 0, 1)
+    """
+    Applies per-channel 2%-98% percentile stretching to prevent single-color 
+    saturation on ocean, water, and cloud-heavy satellite tiles.
+    """
+    img_array = img_array.astype(np.float32)
+    
+    # 2D Single-channel array (e.g. SAR radar)
+    if img_array.ndim == 2:
+        p2, p98 = np.percentile(img_array, (2, 98))
+        if p98 > p2:
+            return np.clip((img_array - p2) / (p98 - p2), 0, 1)
+        return np.zeros_like(img_array)
+        
+    # 3D Multi-channel array (Channels-First: C, H, W)
+    if img_array.ndim == 3 and img_array.shape[0] in [1, 3, 4, 13]:
+        out = np.zeros_like(img_array)
+        for c in range(img_array.shape[0]):
+            p2, p98 = np.percentile(img_array[c], (2, 98))
+            if p98 > p2:
+                out[c] = np.clip((img_array[c] - p2) / (p98 - p2), 0, 1)
+        return out
+        
+    # 3D Multi-channel array (Channels-Last: H, W, C)
+    if img_array.ndim == 3:
+        out = np.zeros_like(img_array)
+        for c in range(img_array.shape[2]):
+            p2, p98 = np.percentile(img_array[:, :, c], (2, 98))
+            if p98 > p2:
+                out[:, :, c] = np.clip((img_array[:, :, c] - p2) / (p98 - p2), 0, 1)
+        return out
+
+    return img_array
 
 @st.cache_data
 def get_valid_dataset_pairs(data_path):
