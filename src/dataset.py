@@ -50,7 +50,8 @@ class SEN12MSDataset(Dataset):
             sar_img = src.read() # [2, H, W] - VV, VH polarizations
             
         with rasterio.open(opt_path) as src:
-            opt_img = src.read() # [4, H, W] - RGB + NIR
+            # Explicitly tell rasterio to only pull bands 1, 2, 3, and 4
+            opt_img = src.read([1, 2, 3, 4]).astype(np.float32)# [4, H, W] - RGB + NIR
             
         # Convert to float32
         sar_img = sar_img.astype(np.float32)

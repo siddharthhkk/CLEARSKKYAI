@@ -17,7 +17,7 @@ PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, '..'))
 
 # Dynamically add the 'src' folder to Python's path so it can import models
 sys.path.append(os.path.join(PROJECT_ROOT, 'src'))
-from models import ClearSkyUNet
+from models import ClearSkyUNet    # type: ignore
 
 st.set_page_config(page_title="ClearSky-AI | Cloud Removal Demo", layout="wide")
 
@@ -83,15 +83,49 @@ selected_sar = st.sidebar.selectbox(
 # Resolve the optical partner pair dynamically
 selected_opt = selected_sar.replace("s1_", "s2_").replace("S1_", "S2_")
 
-# Swap directory names to locate the corresponding optical folder
+# Swap directory names to locate the corresponding optical folder (handling case variations)
 for old_dir, new_dir in [
     ("\\sar\\", "\\optical\\"), ("/sar/", "/optical/"),
     ("\\sar\\", "\\s2\\"), ("/sar/", "/s2/"),
     ("\\S1\\", "\\S2\\"), ("/S1/", "/S2/"),
-    ("\\s1\\", "\\s2\\"), ("/s1/", "/s2/")
+    ("\\S1\\", "\\s2\\"), ("/S1/", "/s2/"),
+    ("\\s1\\", "\\s2\\"), ("/s1/", "/s2/"),
+    ("\\s1_\\", "\\s2_\\"), ("/s1_/", "/s2_/"),
+    ("\\S1_\\", "\\S2_\\"), ("/S1_/", "/S2_/"),
 ]:
     if old_dir in selected_opt:
         selected_opt = selected_opt.replace(old_dir, new_dir)
+
+# Robust Fallback Search: If direct path doesn't exist, search dynamically in DATA_PATH
+if not os.path.exists(selected_opt):
+    # Try alternate extension case (.tif <-> .TIF)
+    alt_ext = (
+        selected_opt.replace(".tif", ".TIF")
+        if selected_opt.endswith(".tif")
+        else selected_opt.replace(".TIF", ".tif")
+    )
+
+    if os.path.exists(alt_ext):
+        selected_opt = alt_ext
+    else:
+        # Search anywhere in the dataset directory for the matching target optical filename
+        opt_filename = os.path.basename(selected_opt)
+        search_matches = glob.glob(
+            os.path.join(DATA_PATH, f"**/{opt_filename}"), recursive=True
+        )
+        if not search_matches:
+            alt_filename = os.path.basename(alt_ext)
+            search_matches = glob.glob(
+                os.path.join(DATA_PATH, f"**/{alt_filename}"), recursive=True
+            )
+
+        if search_matches:
+            selected_opt = search_matches[0]
+        else:
+            st.error(
+                f"Could not find matching optical file for `{os.path.basename(selected_sar)}`"
+            )
+            st.stop()
 
 # Handle upper/lower case extension mismatches (.tif vs .TIF)
 if not os.path.exists(selected_opt):
