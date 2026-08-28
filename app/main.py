@@ -1,4 +1,3 @@
-# app/main.py
 import os
 import sys
 import glob
@@ -9,13 +8,11 @@ import streamlit as st
 
 # ==========================================
 # UNIVERSAL PATH RESOLUTION
-# Ensures the app runs on ANY machine, regardless
-# of where the user runs the 'streamlit run' command from.
 # ==========================================
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, '..'))
 
-# Dynamically add the 'src' folder to Python's path so it can import models
+# Dynamically add the 'src' folder to Python's path
 sys.path.append(os.path.join(PROJECT_ROOT, 'src'))
 from models import ClearSkyUNet    # type: ignore
 
@@ -41,7 +38,6 @@ def load_model():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = ClearSkyUNet().to(device)
     
-    # Safely target the weights folder
     weights_path = os.path.join(PROJECT_ROOT, "weights", "best_model.pth")
     
     if os.path.exists(weights_path):
@@ -62,82 +58,90 @@ def normalize_for_display(img_array):
         img_norm = np.zeros_like(img_array)
     return np.clip(img_norm, 0, 1)
 
-# Sidebar - Sample Selection
+def find_optical_pair(sar_path, root_dir):
+    """Locates the corresponding optical tile handling casing & path variations."""
+    sar_dir = os.path.dirname(sar_path)
+    sar_file = os.path.basename(sar_path)
+    
+    # Target optical filenames
+    target_names = [
+        sar_file.replace("s1_", "s2_"),
+        sar_file.replace("s1_", "S2_"),
+        sar_file.replace("S1_", "s2_"),
+        sar_file.replace("S1_", "S2_")
+    ]
+    
+    filenames_to_try = []
+    for name in target_names:
+        filenames_to_try.append(name)
+        if name.endswith('.tif'):
+            filenames_to_try.append(name[:-4] + '.TIF')
+        elif name.endswith('.TIF'):
+            filenames_to_try.append(name[:-4] + '.tif')
+            
+    filenames_to_try = list(set(filenames_to_try))
+    
+    # 1. Direct path replacement (e.g. replacing /s1/ with /s2/)
+    for fname in filenames_to_try:
+        sar_dir_opt = sar_dir.replace("/s1/", "/s2/").replace("/S1/", "/S2/").replace("/s1/", "/S2/").replace("/S1/", "/s2/")
+        candidate = os.path.join(sar_dir_opt, fname)
+        if os.path.exists(candidate):
+            return candidate
+
+    # 2. Local search inside parent ROI folder
+    parent_dir = os.path.dirname(sar_dir)
+    for fname in filenames_to_try:
+        matches = glob.glob(os.path.join(parent_dir, "**", fname), recursive=True)
+        if matches:
+            return matches[0]
+            
+    # 3. Global search fallback
+    for fname in filenames_to_try:
+        matches = glob.glob(os.path.join(root_dir, "**", fname), recursive=True)
+        if matches:
+            return matches[0]
+            
+    return None
+
+@st.cache_data
+def get_valid_dataset_pairs(data_path):
+    """Indexes dataset and filters only valid SAR + Optical image pairs."""
+    all_sar = sorted(
+        glob.glob(os.path.join(data_path, "**/s1_*.tif"), recursive=True) +
+        glob.glob(os.path.join(data_path, "**/s1_*.TIF"), recursive=True) +
+        glob.glob(os.path.join(data_path, "**/S1_*.tif"), recursive=True) +
+        glob.glob(os.path.join(data_path, "**/S1_*.TIF"), recursive=True)
+    )
+    
+    valid_pairs = {}
+    for sar in all_sar:
+        opt = find_optical_pair(sar, data_path)
+        if opt:
+            valid_pairs[sar] = opt
+            
+    return valid_pairs
+
+# Sidebar - Control Panel
 st.sidebar.header("🕹️ Control Panel")
+model, device = load_model()
 
-# Catch both lowercase and uppercase .tif extensions across OS environments (Windows/Mac/Linux)
-sar_files = glob.glob(os.path.join(DATA_PATH, "**/s1_*.tif"), recursive=True) + \
-            glob.glob(os.path.join(DATA_PATH, "**/s1_*.TIF"), recursive=True)
+# Load only valid pairs into the dropdown menu
+valid_pairs = get_valid_dataset_pairs(DATA_PATH)
 
-if not sar_files:
-    st.error(f"No SAR sample tiles found in `{DATA_PATH}`. Ensure demo samples are tracked in Git.")
+if not valid_pairs:
+    st.error(f"No valid SAR-Optical image pairs found in `{DATA_PATH}`.")
     st.stop()
 
-# Show just the filename in the dropdown, not the ugly absolute path
+sar_file_list = list(valid_pairs.keys())
 selected_sar = st.sidebar.selectbox(
     "Select Satellite Scene Tile", 
-    sar_files, 
+    sar_file_list, 
     format_func=lambda x: os.path.basename(x)
 )
 
-# Resolve the optical partner pair dynamically
-selected_opt = selected_sar.replace("s1_", "s2_").replace("S1_", "S2_")
+selected_opt = valid_pairs[selected_sar]
 
-# Swap directory names to locate the corresponding optical folder (handling case variations)
-for old_dir, new_dir in [
-    ("\\sar\\", "\\optical\\"), ("/sar/", "/optical/"),
-    ("\\sar\\", "\\s2\\"), ("/sar/", "/s2/"),
-    ("\\S1\\", "\\S2\\"), ("/S1/", "/S2/"),
-    ("\\S1\\", "\\s2\\"), ("/S1/", "/s2/"),
-    ("\\s1\\", "\\s2\\"), ("/s1/", "/s2/"),
-    ("\\s1_\\", "\\s2_\\"), ("/s1_/", "/s2_/"),
-    ("\\S1_\\", "\\S2_\\"), ("/S1_/", "/S2_/"),
-]:
-    if old_dir in selected_opt:
-        selected_opt = selected_opt.replace(old_dir, new_dir)
-
-# Robust Fallback Search: If direct path doesn't exist, search dynamically in DATA_PATH
-if not os.path.exists(selected_opt):
-    # Try alternate extension case (.tif <-> .TIF)
-    alt_ext = (
-        selected_opt.replace(".tif", ".TIF")
-        if selected_opt.endswith(".tif")
-        else selected_opt.replace(".TIF", ".tif")
-    )
-
-    if os.path.exists(alt_ext):
-        selected_opt = alt_ext
-    else:
-        # Search anywhere in the dataset directory for the matching target optical filename
-        opt_filename = os.path.basename(selected_opt)
-        search_matches = glob.glob(
-            os.path.join(DATA_PATH, f"**/{opt_filename}"), recursive=True
-        )
-        if not search_matches:
-            alt_filename = os.path.basename(alt_ext)
-            search_matches = glob.glob(
-                os.path.join(DATA_PATH, f"**/{alt_filename}"), recursive=True
-            )
-
-        if search_matches:
-            selected_opt = search_matches[0]
-        else:
-            st.error(
-                f"Could not find matching optical file for `{os.path.basename(selected_sar)}`"
-            )
-            st.stop()
-
-# Handle upper/lower case extension mismatches (.tif vs .TIF)
-if not os.path.exists(selected_opt):
-    if selected_opt.endswith('.tif') and os.path.exists(selected_opt.replace('.tif', '.TIF')):
-        selected_opt = selected_opt.replace('.tif', '.TIF')
-    elif selected_opt.endswith('.TIF') and os.path.exists(selected_opt.replace('.TIF', '.tif')):
-        selected_opt = selected_opt.replace('.TIF', '.tif')
-    
-# Load Model
-model, device = load_model()
-
-if st.button("✨ Run Cloud Removal Reconstruction", type="primary"):
+if st.sidebar.button("✨ Run Cloud Removal Reconstruction", type="primary"):
     with st.spinner("Processing multi-modal feature fusion..."):
         try:
             # Read TIF files
@@ -145,7 +149,7 @@ if st.button("✨ Run Cloud Removal Reconstruction", type="primary"):
                 sar_raw = src.read().astype(np.float32)
                 
             with rasterio.open(selected_opt) as src:
-                # FIX: Slice the first 4 bands (RGB + NIR) from the 13-band Sentinel-2 image
+                # Slice first 4 bands (RGB + NIR) to match training shape
                 opt_raw = src.read()[:4, :, :].astype(np.float32)
                 
             # Normalize to [-1, 1] for Model Input
