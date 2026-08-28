@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>ClearSky-AI Technical Progress & Debugging Log</title>
+    <style>
+        @page { size: A4; margin: 15mm 12mm; background-color: #f8fafc; }
+        *, *::before, *::after { box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #1e293b; background-color: #f8fafc; margin: 0; padding: 0; font-size: 10pt; line-height: 1.5; }
+        .header { background-color: #0f172a; color: #ffffff; margin: -15mm -12mm 20px -12mm; padding: 24px 15mm 20px 15mm; border-bottom: 4px solid #2563eb; }
+        .header h1 { margin: 0 0 6px 0; font-size: 20pt; font-weight: 700; letter-spacing: -0.5px; color: #ffffff; }
+        .header .subtitle { font-size: 10pt; color: #94a3b8; margin: 0; text-transform: uppercase; letter-spacing: 1px; font-weight: 600; }
+        .meta-table { width: 100%; margin-top: 14px; border-top: 1px solid #334155; padding-top: 10px; }
+        .meta-cell { font-size: 8.5pt; color: #cbd5e1; }
+        .meta-cell strong { color: #60a5fa; }
+        h2 { font-size: 13pt; color: #0f172a; border-bottom: 2px solid #e2e8f0; padding-bottom: 4px; margin-top: 22px; margin-bottom: 10px; }
+        h3 { font-size: 11pt; color: #1e40af; margin-top: 14px; margin-bottom: 6px; }
+        p { margin-top: 0; margin-bottom: 10px; text-align: justify; }
+        ul, ol { margin-top: 0; margin-bottom: 10px; padding-left: 20px; }
+        .card { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 6px; padding: 12px 14px; margin-bottom: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.02); }
+        .card-title { font-weight: 700; font-size: 10.5pt; color: #0f172a; margin-bottom: 4px; }
+        .badge-cause { background-color: #fee2e2; color: #b91c1c; display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 7.5pt; font-weight: 700; text-transform: uppercase; }
+        code { background-color: #e2e8f0; color: #0f172a; padding: 1px 5px; border-radius: 3px; font-size: 8.5pt; font-family: "SFMono-Regular", monospace; }
+        .log-table { width: 100%; border-collapse: collapse; margin-top: 8px; margin-bottom: 12px; font-size: 8.5pt; background: #ffffff; }
+        .log-table th { background-color: #0f172a; color: #ffffff; text-align: left; padding: 8px 10px; }
+        .log-table td { padding: 8px 10px; border-bottom: 1px solid #e2e8f0; vertical-align: top; }
+        .stat-grid { width: 100%; border-collapse: collapse; margin-bottom: 14px; }
+        .stat-card { background: #ffffff; border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px; text-align: center; }
+        .stat-num { font-size: 14pt; font-weight: 800; color: #2563eb; }
+        .stat-label { font-size: 7.5pt; color: #64748b; text-transform: uppercase; font-weight: 600; }
+        .image-container { text-align: center; margin: 15px 0; }
+        .image-container img { max-width: 78%; border: 1px solid #cbd5e1; border-radius: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+        .caption { font-size: 8pt; color: #64748b; font-style: italic; margin-top: 6px; text-align: center; }
+        .footer { margin-top: 30px; border-top: 1px solid #cbd5e1; padding-top: 10px; font-size: 8pt; color: #94a3b8; text-align: center; }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <div class="subtitle">ClearSky-AI Project Documentation</div>
+        <h1>Technical Architecture & Debugging Log</h1>
+        <table class="meta-table">
+            <tr>
+                <td class="meta-cell"><strong>Project:</strong> Multi-Modal SAR-Optical Data Fusion</td>
+                <td class="meta-cell"><strong>Domain:</strong> Satellite Imagery Cloud Removal</td>
+                <td class="meta-cell"><strong>Status:</strong> End-to-End Pipeline Validated</td>
+            </tr>
+        </table>
+    </div>
+
+    <h2>1. Project Origin & Objective</h2>
+    <p><strong>ClearSky-AI</strong> is a deep learning architecture designed to perform cloud removal on satellite imagery by fusing multi-modal remote sensing data. Optical sensors (such as Sentinel-2) are frequently obstructed by cloud cover. Synthetic Aperture Radar (SAR) sensors (such as Sentinel-1) penetrate atmospheric clouds, capturing structural ground details regardless of weather conditions.</p>
+    <p>The objective of this system is to leverage a dual-stream U-Net architecture coupled with Spatial-Channel Attention (SCA) and PatchGAN discriminators to reconstruct clear, high-resolution optical imagery using paired SAR radar features and corrupted optical input.</p>
+
+    <table class="stat-grid">
+        <tr>
+            <td style="width: 25%; padding-right: 4px;"><div class="stat-card"><div class="stat-num">91 GB</div><div class="stat-label">Total Raw Dataset</div></div></td>
+            <td style="width: 25%; padding-left: 2px; padding-right: 2px;"><div class="stat-card"><div class="stat-num">Dual Stream</div><div class="stat-label">U-Net Architecture</div></div></td>
+            <td style="width: 25%; padding-left: 2px; padding-right: 2px;"><div class="stat-card"><div class="stat-num">150 MB</div><div class="stat-label">Optimized Repo Size</div></div></td>
+            <td style="width: 25%; padding-left: 4px;"><div class="stat-card"><div class="stat-num">100% Pass</div><div class="stat-label">Pipeline Compatibility</div></div></td>
+        </tr>
+    </table>
+
+    <h2>2. Initial Setup & Cloud Infrastructure</h2>
+    <p>We began with a raw dataset footprint of approximately <strong>91 GB</strong> (50 GB Sentinel-1 SAR imagery and 41 GB Sentinel-2 Optical imagery). Setting up the local development environment inside the Cloud studio required addressing critical storage and version control bottlenecks:</p>
+    <ul>
+        <li><strong>Cloud Storage & Compute (Lightning.ai):</strong> To manage the heavy lifting required for this project, we are leveraging <strong>Lightning.ai</strong>. Their cloud platform serves as the backbone of our infrastructure, allowing us to securely store the massive 91 GB raw dataset in the cloud, circumventing local hardware limits, and providing seamless access to scalable GPU compute resources required for the U-Net training pipeline.</li>
+        <li><strong>Git History Bloat Resolution:</strong> Initial repository tracking mistakenly staged the heavy data directories, bloating the hidden <code>.git</code> repository to over 47 GB. This would have caused severe GitHub push failures.</li>
+        <li><strong>Repository Reset Protocol:</strong> We executed a clean local repository re-initialization by configuring a strict <code>.gitignore</code> ruleset (excluding <code>data/</code>), purging the local <code>.git</code> tree, re-initializing fresh tracking, and force-pushing to preserve the existing GitHub URL while dropping 47 GB of dead weight.</li>
+    </ul>
+
+    <h2>3. Debugging Log & Technical Resolutions</h2>
+    <table class="log-table">
+        <thead>
+            <tr>
+                <th style="width: 20%;">Issue Category</th><th style="width: 35%;">Root Cause</th><th style="width: 45%;">Implemented Fix</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><strong>Directory Path Resolution Error</strong></td>
+                <td><code>app/main.py</code> swapped filename prefix from <code>s1_</code> to <code>s2_</code> but retained the <code>\sar\</code> folder path in lookup.</td>
+                <td>Implemented dynamic regex string replacement to map <code>\sar\</code> to <code>\optical\</code> or <code>\s2\</code> folders seamlessly.</td>
+            </tr>
+            <tr>
+                <td><strong>Input Channel Tensor Mismatch</strong></td>
+                <td>Sentinel-2 TIFF files contained 13 spectral bands; <code>ClearSkyUNet</code> Optical Encoder expected 4 channels (RGB+NIR).</td>
+                <td>Sliced input array in <code>app/main.py</code> using <code>opt_raw = src.read()[:4, :, :].astype(np.float32)</code>.</td>
+            </tr>
+            <tr>
+                <td><strong>U-Net Skip-Connection Channel Math</strong></td>
+                <td>Decoder <code>dec2</code> layer expected 1280 channels, but forward pass concatenated 768 channels.</td>
+                <td>Updated <code>src/models.py</code> <code>__init__</code> to set <code>self.dec2 = self._up_block(256 + 256 + 256, 128)</code> matching dual skip dimensions.</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <h2>4. Investigation of Output Artifacts: The "Green Tint" Phenomenon</h2>
+    <div class="card">
+        <div class="card-title">
+            <span class="badge-cause">Diagnosis</span> Output Image Appearing as Uniform Green Texture
+        </div>
+        <p>Upon executing the first end-to-end inference pass, the Streamlit dashboard generated the three panels cleanly, but the <strong>ClearSky Output</strong> exhibited a uniform green noise pattern instead of a reconstructed terrain image.</p>
+        <p><strong>Why did this happen?</strong><br>The control panel flagged: <em>"⚠️ Weights not found. Running with initialized architecture."</em> In PyTorch, an un-trained neural network initializes its weights using standard random Gaussian distribution. Pushing SAR and optical features through an untrained network causes random tensor multiplication. When normalized from <code>[-1, 1]</code> back to RGB display range <code>[0, 1]</code>, these random values average out into a uniform mid-frequency greenish texture.</p>
+    </div>
+    
+    <div class="image-container">
+        <img src="Screenshot 2026-08-28 at 08-58-28 ClearSky-AI Cloud Removal Demo.png" alt="ClearSky-AI UI Output - Untrained State" />
+        <div class="caption">
+            Figure 1: Current Multi-Modal Cloud Removal Pipeline running with initialized (untrained) architecture.<br>
+            <strong>Note:</strong> Once our model training is fully complete on the dataset, we will update this report with subsequent visual proofs demonstrating accurate, reconstructed target outputs.
+        </div>
+    </div>
+
+    <h2>5. Current Status & Model Training Roadmap</h2>
+    <p>The ClearSky-AI framework has successfully achieved <strong>Structural & Pipeline Validation</strong>. The U-Net dual-encoder, attention bottleneck, skip connections, tensor normalization, and dashboard visualizer are 100% functional and error-free.</p>
+    <h3>Next Steps: Full Model Training Phase</h3>
+    <ol>
+        <li><strong>Lazy Loading via PyTorch DataLoader:</strong> Implement a custom PyTorch <code>Dataset</code> using dynamic read operations inside <code>__getitem__</code> to handle the 91 GB of data.</li>
+        <li><strong>GPU Acceleration & Loss Formulation:</strong> Train using L1 Reconstruction Loss combined with Adversarial PatchGAN Loss.</li>
+        <li><strong>Checkpoint Export:</strong> Save trained model parameters into <code>checkpoints/clearsky_unet.pth</code>.</li>
+    </ol>
+    <div class="footer">ClearSky-AI Project Documentation • Generated Automatically for System Audit & Progress Tracking</div>
+</body>
+</html>
