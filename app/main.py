@@ -58,66 +58,34 @@ def normalize_for_display(img_array):
         img_norm = np.zeros_like(img_array)
     return np.clip(img_norm, 0, 1)
 
-def find_optical_pair(sar_path, root_dir):
-    """Locates the corresponding optical tile handling casing & path variations."""
-    sar_dir = os.path.dirname(sar_path)
-    sar_file = os.path.basename(sar_path)
-    
-    # Target optical filenames
-    target_names = [
-        sar_file.replace("s1_", "s2_"),
-        sar_file.replace("s1_", "S2_"),
-        sar_file.replace("S1_", "s2_"),
-        sar_file.replace("S1_", "S2_")
-    ]
-    
-    filenames_to_try = []
-    for name in target_names:
-        filenames_to_try.append(name)
-        if name.endswith('.tif'):
-            filenames_to_try.append(name[:-4] + '.TIF')
-        elif name.endswith('.TIF'):
-            filenames_to_try.append(name[:-4] + '.tif')
-            
-    filenames_to_try = list(set(filenames_to_try))
-    
-    # 1. Direct path replacement (e.g. replacing /s1/ with /s2/)
-    for fname in filenames_to_try:
-        sar_dir_opt = sar_dir.replace("/s1/", "/s2/").replace("/S1/", "/S2/").replace("/s1/", "/S2/").replace("/S1/", "/s2/")
-        candidate = os.path.join(sar_dir_opt, fname)
-        if os.path.exists(candidate):
-            return candidate
-
-    # 2. Local search inside parent ROI folder
-    parent_dir = os.path.dirname(sar_dir)
-    for fname in filenames_to_try:
-        matches = glob.glob(os.path.join(parent_dir, "**", fname), recursive=True)
-        if matches:
-            return matches[0]
-            
-    # 3. Global search fallback
-    for fname in filenames_to_try:
-        matches = glob.glob(os.path.join(root_dir, "**", fname), recursive=True)
-        if matches:
-            return matches[0]
-            
-    return None
-
 @st.cache_data
 def get_valid_dataset_pairs(data_path):
-    """Indexes dataset and filters only valid SAR + Optical image pairs."""
-    all_sar = sorted(
-        glob.glob(os.path.join(data_path, "**/s1_*.tif"), recursive=True) +
-        glob.glob(os.path.join(data_path, "**/s1_*.TIF"), recursive=True) +
-        glob.glob(os.path.join(data_path, "**/S1_*.tif"), recursive=True) +
-        glob.glob(os.path.join(data_path, "**/S1_*.TIF"), recursive=True)
-    )
+    """Indexes dataset in O(N) time using a hash map for instant lookup."""
+    # 1. Single pass to grab ALL tif files at once (Fast)
+    all_tifs = glob.glob(os.path.join(data_path, "**/*.tif"), recursive=True) + \
+               glob.glob(os.path.join(data_path, "**/*.TIF"), recursive=True)
     
+    sar_paths = []
+    opt_dict = {}
+    
+    # 2. Separate and hash the files
+    for path in all_tifs:
+        filename = os.path.basename(path)
+        
+        # Create a universal matching key by stripping prefixes and extensions
+        # Example: 's1_ROIs2017_22...tif' -> 'rois2017_22...'
+        base_key = filename.lower().replace("s1_", "").replace("s2_", "").replace(".tif", "")
+        
+        if filename.lower().startswith("s1_"):
+            sar_paths.append((base_key, path))
+        elif filename.lower().startswith("s2_"):
+            opt_dict[base_key] = path
+            
+    # 3. Instantly pair them using O(1) dictionary lookups
     valid_pairs = {}
-    for sar in all_sar:
-        opt = find_optical_pair(sar, data_path)
-        if opt:
-            valid_pairs[sar] = opt
+    for base_key, sar_path in sar_paths:
+        if base_key in opt_dict:
+            valid_pairs[sar_path] = opt_dict[base_key]
             
     return valid_pairs
 
