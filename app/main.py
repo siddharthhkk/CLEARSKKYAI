@@ -136,17 +136,20 @@ if st.sidebar.button("✨ Run Cloud Removal Reconstruction", type="primary"):
             
             with col1:
                 st.subheader("1. SAR (Radar)")
+                # Display the first band of the SAR image
                 sar_disp = normalize_for_display(sar_raw[0])
                 st.image(sar_disp, caption="Cloud-Penetrating Structural Radar", use_container_width=True)
                 
             with col2:
                 st.subheader("2. Sentinel-2 (Cloudy)")
-                opt_rgb = normalize_for_display(opt_raw[:3].transpose(1, 2, 0))
+                # Grab Red, Green, Blue bands in the correct order for realistic color
+                opt_rgb = normalize_for_display(opt_raw[[3, 2, 1]].transpose(1, 2, 0)) 
                 st.image(opt_rgb, caption="Corrupted Optical Imagery", use_container_width=True)
                 
             with col3:
                 st.subheader("3. ClearSky Output")
-                rec_rgb = normalize_for_display(rec_img[:3].transpose(1, 2, 0))
+                # Grab Red, Green, Blue bands in the correct order for realistic color
+                rec_rgb = normalize_for_display(rec_img[[3, 2, 1]].transpose(1, 2, 0))
                 st.image(rec_rgb, caption="Reconstructed Target", use_container_width=True)
 
             st.divider()
