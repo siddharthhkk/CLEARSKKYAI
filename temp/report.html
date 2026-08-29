@@ -71,8 +71,23 @@
         <li><strong>Repository Reset Protocol:</strong> We executed a clean local repository re-initialization by configuring a strict <code>.gitignore</code> ruleset (excluding <code>data/</code>), purging the local <code>.git</code> tree, re-initializing fresh tracking, and force-pushing to preserve the existing GitHub URL while dropping 47 GB of dead weight[cite: 1].</li>
     </ul>
 
-    <h2>3. Model Training & Quantitative Benchmarks</h2>
-    <p>Following architectural validation, full-scale model training was executed using <code>python src/train.py</code> across 25 epochs. The pipeline dynamically balanced Generator reconstruction loss (L1 + Perceptual) against PatchGAN Discriminator loss.</p>
+    <h2>3. Model Training & Loss Architecture</h2>
+    
+    <h3>3.1 Loss Function Optimization & VGG Integration</h3>
+    <p>The core training script leverages a Conditional GAN (Pix2Pix) framework. During initial trials, the network relied heavily on an extreme Pixel-wise L1 Loss scaling factor. Because L1 Loss penalizes spatial misalignments rigidly, the Generator developed a "lazy" behavior on thick, opaque cloud tiles: it would directly pass the blurred clouds through its skip connections to incur a lower, safer L1 penalty rather than risking a pixel-imperfect terrain hallucination.</p>
+    <p>To force authentic terrain reconstruction, we integrated a multi-faceted objective function for the Generator:</p>
+    <ul>
+        <li><strong>Adversarial Loss ($L_{GAN}$):</strong> Utilizing <code>BCEWithLogitsLoss</code> via a PatchGAN Discriminator to evaluate patch-level textural realism.</li>
+        <li><strong>Pixel-wise Reconstruction ($L_{L1}$):</strong> <code>nn.L1Loss</code> scaled back slightly to ensure overarching color accuracy without overly punishing minor shifts.</li>
+        <li><strong>Perceptual Loss ($L_{VGG}$):</strong> Processes inputs through the first 36 layers of a pre-trained VGG-19 network. By comparing high-level semantic features (edges, shapes) instead of raw pixels, this loss grants the Generator permission to "hallucinate" underlying terrain structurally from the SAR data, overriding the lazy cloud pass-through.</li>
+    </ul>
+    
+    <div style="text-align: center; margin: 15px 0;">
+        $$L_{G} = L_{GAN} + 50.0 \times L_{L1} + 10.0 \times L_{VGG}$$
+    </div>
+
+    <h3>3.2 Quantitative Benchmarks</h3>
+    <p>Following the architectural refinement, full-scale model training was executed using <code>python src/train.py</code> across 25 epochs.</p>
     <ul>
         <li><strong>Convergence Speed:</strong> The model crossed 28 dB PSNR within the first 3 epochs, demonstrating fast feature alignment between SAR structural radar maps and multi-spectral optical targets.</li>
         <li><strong>Peak Performance:</strong> Reached a peak Peak Signal-to-Noise Ratio (PSNR) of <strong>31.50 dB at Epoch 10</strong> with Generator Loss lowering to 6.1690.</li>
@@ -129,6 +144,13 @@
             <span class="badge-cause">Phase 1: Diagnosis</span> Initial Untrained Architecture ("Green Noise" Phenomenon)
         </div>
         <p>During early UI validation before model training, the application displayed a uniform mid-frequency green texture[cite: 1]. Un-trained PyTorch weights initialized from a standard Gaussian distribution created random tensor multiplication[cite: 1]. When normalized from <code>[-1, 1]</code> back to RGB display range <code>[0, 1]</code>, random values averaged into uniform green noise[cite: 1].</p>
+        
+        <div class="image-container">
+            <img src="figure2.png" alt="Streamlit dashboard showing green noise untrained initialization" />
+            <div class="caption">
+                Figure 2: Initial untrained architecture displaying the "Green Noise" phenomenon due to uninitialized Gaussian weights.
+            </div>
+        </div>
     </div>
 
     <div class="card">
@@ -136,12 +158,12 @@
             <span class="badge-cause">Phase 2: Diagnosis</span> Deployed Trained Model ("Blue Tint" Phenomenon)
         </div>
         <p>After loading the trained weights (<code>best_model.pth</code>), the U-Net inference ran successfully and feature fusion completed. However, the visualization rendered with a heavy blue overlay across both Sentinel-2 inputs and reconstructed outputs. Investigation revealed that multi-spectral satellite imagery contains up to 13 bands. Slicing <code>[:3]</code> pulled <strong>Band 0 (Coastal Aerosol)</strong>, <strong>Band 1 (Blue)</strong>, and <strong>Band 2 (Green)</strong>, drowning out red ground reflectivity and exaggerating atmospheric blue scattering.</p>
-    </div>
-
-    <div class="image-container">
-        <img src="Screenshot 2026-08-28 121147.jpg" alt="Streamlit dashboard showing blue-tinted satellite visualization bug" />
-        <div class="caption">
-            Figure 2: Streamlit Dashboard displaying the multi-spectral channel mapping bug (Band 0, 1, 2 blue tint overlay).
+        
+        <div class="image-container">
+            <img src="figure3.png" alt="Streamlit dashboard showing blue-tinted satellite visualization bug" />
+            <div class="caption">
+                Figure 3: Streamlit Dashboard displaying the multi-spectral channel mapping bug (Band 0, 1, 2 blue tint overlay).
+            </div>
         </div>
     </div>
 
@@ -153,12 +175,12 @@
         <p><code>opt_rgb = normalize_for_display(opt_raw[[3, 2, 1]].transpose(1, 2, 0))</code><br>
         <code>rec_rgb = normalize_for_display(rec_img[[3, 2, 1]].transpose(1, 2, 0))</code></p>
         <p>This completely eliminated the blue haze, correctly displaying natural terrain, agricultural plots, and true-to-life ground reflectance.</p>
-    </div>
-
-    <div class="image-container">
-        <img src="Screenshot 2026-08-28 at 19-30-40 ClearSky-AI Cloud Removal Demo.jpg" alt="Final Streamlit dashboard showing corrected natural-color cloud removal output" />
-        <div class="caption">
-            Figure 3: Final operational ClearSky-AI Dashboard showing SAR input, corrupted optical imagery, and reconstructed cloud-free output with natural color rendering.
+        
+        <div class="image-container">
+            <img src="figure4.png" alt="Final Streamlit dashboard showing corrected natural-color cloud removal output" />
+            <div class="caption">
+                Figure 4: Final operational ClearSky-AI Dashboard showing SAR input, corrupted optical imagery, and reconstructed cloud-free output with natural color rendering.
+            </div>
         </div>
     </div>
 

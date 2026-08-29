@@ -49,41 +49,72 @@ def load_model():
     model.eval()
     return model, device
 
-import numpy as np
-
-def normalize_for_display(img_array):
+def scale_tensor_for_model(arr: np.ndarray) -> torch.Tensor:
     """
-    Applies per-channel 2%-98% percentile stretching to prevent single-color 
-    saturation on ocean, water, and cloud-heavy satellite tiles.
+    Min-Max scales raw physical reflectance arrays to [-1, 1] for PyTorch.
+    Uses per-channel scaling to match `src/dataset.py`.
+    """
+    arr = arr.astype(np.float32)
+
+    if arr.ndim == 3:
+        norm = np.empty_like(arr, dtype=np.float32)
+        for c in range(arr.shape[0]):
+            c_min, c_max = arr[c].min(), arr[c].max()
+            if c_max > c_min:
+                norm[c] = (arr[c] - c_min) / (c_max - c_min + 1e-8)
+            else:
+                norm[c] = 0.0
+    else:
+        arr_min, arr_max = arr.min(), arr.max()
+        if arr_max > arr_min:
+            norm = (arr - arr_min) / (arr_max - arr_min + 1e-8)
+        else:
+            norm = np.zeros_like(arr, dtype=np.float32)
+
+    return torch.from_numpy(norm * 2.0 - 1.0).to(torch.float32)
+
+def normalize_for_display(img_array: np.ndarray) -> np.ndarray:
+    """
+    Applies joint multi-channel percentile scaling (2%-98%) and gamma correction (0.85).
+    Preserves true color ratios without blowing out aquatic or cloudy tiles.
     """
     img_array = img_array.astype(np.float32)
     
-    # 2D Single-channel array (e.g. SAR radar)
+    # 1. Single Channel (SAR)
     if img_array.ndim == 2:
         p2, p98 = np.percentile(img_array, (2, 98))
         if p98 > p2:
-            return np.clip((img_array - p2) / (p98 - p2), 0, 1)
+            return np.clip((img_array - p2) / (p98 - p2), 0.0, 1.0)
         return np.zeros_like(img_array)
         
-    # 3D Multi-channel array (Channels-First: C, H, W)
-    if img_array.ndim == 3 and img_array.shape[0] in [1, 3, 4, 13]:
-        out = np.zeros_like(img_array)
-        for c in range(img_array.shape[0]):
-            p2, p98 = np.percentile(img_array[c], (2, 98))
-            if p98 > p2:
-                out[c] = np.clip((img_array[c] - p2) / (p98 - p2), 0, 1)
-        return out
-        
-    # 3D Multi-channel array (Channels-Last: H, W, C)
+    # 2. Multi-Channel RGB (Channels-First: 3, H, W)
     if img_array.ndim == 3:
-        out = np.zeros_like(img_array)
-        for c in range(img_array.shape[2]):
-            p2, p98 = np.percentile(img_array[:, :, c], (2, 98))
-            if p98 > p2:
-                out[:, :, c] = np.clip((img_array[:, :, c] - p2) / (p98 - p2), 0, 1)
-        return out
+        p2, p98 = np.percentile(img_array, (2, 98))
+        if p98 > p2:
+            norm = np.clip((img_array - p2) / (p98 - p2), 0.0, 1.0)
+        else:
+            norm = np.zeros_like(img_array)
+            
+        return np.power(norm, 0.85)
 
     return img_array
+
+def get_rgb_indices(num_bands: int) -> list:
+    """
+    Dynamically determines the correct Red, Green, Blue band indices.
+    Prevents the 'Blue Tint' (Coastal Aerosol) and 'Neon' channel swapping artifacts.
+    """
+    if num_bands == 4:
+        # Standard SEN12MS 4-band: [Blue(2), Green(3), Red(4), NIR(8)]
+        # True Color RGB Mapping: Red=2, Green=1, Blue=0
+        return [2, 1, 0]
+    elif num_bands >= 5:
+        # 13-band Sentinel-2: [Coastal(1), Blue(2), Green(3), Red(4), ...]
+        # True Color RGB Mapping: Red=3, Green=2, Blue=1
+        return [3, 2, 1]
+    
+    # Fallback to direct indexing if pre-processed exactly as RGB
+    return [0, 1, 2]
 
 @st.cache_data
 def get_valid_dataset_pairs(data_path):
@@ -139,48 +170,55 @@ selected_opt = valid_pairs[selected_sar]
 if st.sidebar.button("✨ Run Cloud Removal Reconstruction", type="primary"):
     with st.spinner("Processing multi-modal feature fusion..."):
         try:
-            # Read TIF files
-            with rasterio.open(selected_sar) as src:
-                sar_raw = src.read().astype(np.float32)
+            # 1. Context Managers for safe file handling (prevents memory leaks)
+            with rasterio.open(selected_sar) as src_sar, rasterio.open(selected_opt) as src_opt:
+                sar_raw = src_sar.read().astype(np.float32)
+                # Slice first 4 bands for model input consistency
+                opt_raw = src_opt.read()[:4, :, :].astype(np.float32)
                 
-            with rasterio.open(selected_opt) as src:
-                # Slice first 4 bands (RGB + NIR) to match training shape
-                opt_raw = src.read()[:4, :, :].astype(np.float32)
-                
-            # Normalize to [-1, 1] for Model Input
-            sar_tensor = torch.from_numpy(normalize_for_display(sar_raw) * 2 - 1).unsqueeze(0).to(device)
-            opt_tensor = torch.from_numpy(normalize_for_display(opt_raw) * 2 - 1).unsqueeze(0).to(device)
+            # 2. Tensor Preparation
+            sar_tensor = scale_tensor_for_model(sar_raw).unsqueeze(0).to(device)
+            opt_tensor = scale_tensor_for_model(opt_raw).unsqueeze(0).to(device)
             
-            # Model Inference
+            # 3. Model Inference (Strictly no_grad to save VRAM)
             with torch.no_grad():
                 reconstructed_tensor = model(sar_tensor, opt_tensor)
                 
-            # Convert output back to display format [0, 1]
-            rec_img = (reconstructed_tensor.squeeze(0).cpu().numpy() + 1) / 2.0
+            # 4. Map Model Output back to [0, 1]
+            rec_img = torch.clamp((reconstructed_tensor.squeeze(0) + 1.0) / 2.0, 0.0, 1.0).cpu().numpy()
             
-            # Display Results Side-by-Side
+            # 5. Extract RGB channels safely based on dataset shape
+            rgb_idx = get_rgb_indices(opt_raw.shape[0])
+            opt_rgb_raw = opt_raw[rgb_idx]
+            rec_rgb_raw = rec_img[rgb_idx]
+
+            # 6. Apply Display Normalization and Transpose to Channels-Last (H, W, C)
+            sar_disp = normalize_for_display(sar_raw[0])
+            opt_rgb = normalize_for_display(opt_rgb_raw).transpose(1, 2, 0)
+            rec_rgb = normalize_for_display(rec_rgb_raw).transpose(1, 2, 0)
+
+            # 7. Render UI Columns
             col1, col2, col3 = st.columns(3)
             
             with col1:
                 st.subheader("1. SAR (Radar)")
-                # Display the first band of the SAR image
-                sar_disp = normalize_for_display(sar_raw[0])
                 st.image(sar_disp, caption="Cloud-Penetrating Structural Radar", use_container_width=True)
                 
             with col2:
                 st.subheader("2. Sentinel-2 (Cloudy)")
-                # Grab Red, Green, Blue bands in the correct order for realistic color
-                opt_rgb = normalize_for_display(opt_raw[[3, 2, 1]].transpose(1, 2, 0)) 
-                st.image(opt_rgb, caption="Corrupted Optical Imagery", use_container_width=True)
+                st.image(opt_rgb, caption="Corrupted Optical Imagery", channels="RGB", use_container_width=True)
                 
             with col3:
                 st.subheader("3. ClearSky Output")
-                # Grab Red, Green, Blue bands in the correct order for realistic color
-                rec_rgb = normalize_for_display(rec_img[[3, 2, 1]].transpose(1, 2, 0))
-                st.image(rec_rgb, caption="Reconstructed Target", use_container_width=True)
+                st.image(rec_rgb, caption="Reconstructed Target", channels="RGB", use_container_width=True)
 
             st.divider()
             st.success("🎉 Feature fusion completed successfully!")
+            
+            # 8. Explicit Memory Cleanup (Critical for Streamlit hot-reloading)
+            del sar_tensor, opt_tensor, reconstructed_tensor, sar_raw, opt_raw
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
             
         except Exception as e:
             st.error(f"Error during reconstruction: {str(e)}")

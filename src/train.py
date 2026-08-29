@@ -5,6 +5,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from tqdm import tqdm
+import torchvision.models as models
 
 from dataset import SEN12MSDataset
 from models import ClearSkyUNet, PatchGANDiscriminator
@@ -19,6 +20,33 @@ def calculate_psnr(img1, img2):
     psnr = 20 * math.log10(max_pixel / math.sqrt(mse.item()))
     return psnr
 
+from torchvision.transforms import Normalize
+class VGGPerceptualLoss(nn.Module):
+    def __init__(self, device):
+        super().__init__()
+        # Load pre-trained VGG19 features and freeze weights
+        vgg = models.vgg19(weights='DEFAULT').features[:36].eval().to(device)
+        for param in vgg.parameters():
+            param.requires_grad = False
+        self.vgg = vgg
+        self.criterion = nn.L1Loss()
+        
+        # Standard ImageNet normalization for VGG
+        self.normalize = Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+
+    def forward(self, x, y):
+        # 1. Slice RGB and map from [-1, 1] back to [0, 1]
+        x_rgb = (x[:, :3, :, :] + 1.0) / 2.0
+        y_rgb = (y[:, :3, :, :] + 1.0) / 2.0
+        
+        # 2. Apply ImageNet normalization
+        x_rgb = self.normalize(x_rgb)
+        y_rgb = self.normalize(y_rgb)
+        
+        # 3. Extract features and compare
+        features_x = self.vgg(x_rgb)
+        features_y = self.vgg(y_rgb)
+        return self.criterion(features_x, features_y)
 
 def train_model(
     data_dir="data/",
@@ -26,6 +54,7 @@ def train_model(
     batch_size=8,
     lr=0.0002,
     lambda_l1=100.0,
+    lambda_vgg=10.0,
 ):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"🚀 Training on device: {device}")
@@ -56,13 +85,15 @@ def train_model(
     # 3. Loss Functions
     criterion_GAN = nn.BCEWithLogitsLoss()
     criterion_L1 = nn.L1Loss()
+    criterion_VGG = VGGPerceptualLoss(device)
 
     # 4. Optimizers
     optimizer_G = optim.Adam(net_G.parameters(), lr=lr, betas=(0.5, 0.999))
     optimizer_D = optim.Adam(net_D.parameters(), lr=lr, betas=(0.5, 0.999))
 
     # 5. Mixed Precision Scaler (Speeds up T4 training significantly)
-    scaler = torch.cuda.amp.GradScaler(enabled=torch.cuda.is_available())
+    scaler_G = torch.amp.GradScaler('cuda', enabled=torch.cuda.is_available())
+    scaler_D = torch.amp.GradScaler('cuda', enabled=torch.cuda.is_available())
 
     best_psnr = 0.0
 
@@ -92,7 +123,8 @@ def train_model(
             # ----------------------------------------
             optimizer_D.zero_grad()
 
-            with torch.cuda.amp.autocast(enabled=torch.cuda.is_available()):
+            device_type = 'cuda' if torch.cuda.is_available() else 'cpu'
+            with torch.autocast(device_type=device_type, enabled=torch.cuda.is_available()):
                 # Real Pair
                 pred_real = net_D(sar, opt_cloudy, opt_target)
                 target_real = torch.ones_like(pred_real).to(device)
@@ -106,25 +138,32 @@ def train_model(
 
                 loss_D = (loss_D_real + loss_D_fake) * 0.5
 
-            scaler.scale(loss_D).backward()
-            scaler.step(optimizer_D)
+            scaler_D.scale(loss_D).backward()
+            scaler_D.step(optimizer_D)
+            scaler_D.update()
 
             # ----------------------------------------
             # 2. Train Generator
             # ----------------------------------------
             optimizer_G.zero_grad()
 
-            with torch.cuda.amp.autocast(enabled=torch.cuda.is_available()):
+            device_type = 'cuda' if torch.cuda.is_available() else 'cpu'
+            with torch.autocast(device_type=device_type, enabled=torch.cuda.is_available()):
                 pred_fake_g = net_D(sar, opt_cloudy, fake_opt)
                 loss_G_GAN = criterion_GAN(pred_fake_g, target_real)
                 loss_G_L1 = criterion_L1(fake_opt, opt_target)
-                loss_G = loss_G_GAN + (lambda_l1 * loss_G_L1)
+                
+                # NEW: Calculate Perceptual Loss
+                loss_G_VGG = criterion_VGG(fake_opt, opt_target)
+                
+                # Balance the weights: Dial back L1 slightly, let VGG handle textures
+                loss_G = loss_G_GAN + (50.0 * loss_G_L1) + (10.0 * loss_G_VGG)
 
-            scaler.scale(loss_G).backward()
-            scaler.step(optimizer_G)
+            scaler_G.scale(loss_G).backward()
+            scaler_G.step(optimizer_G)
 
             # Update scaler after step
-            scaler.update()
+            scaler_G.update()
 
             # Track Metrics
             batch_psnr = calculate_psnr(fake_opt, opt_target)
@@ -148,7 +187,14 @@ def train_model(
         )
 
         # Always save latest checkpoint as fallback
-        torch.save(net_G.state_dict(), "weights/latest_model.pth")
+        checkpoint = {
+            'epoch': epoch,
+            'model_G_state_dict': net_G.state_dict(),
+            'optimizer_G_state_dict': optimizer_G.state_dict(),
+            'scaler_G_state_dict': scaler_G.state_dict(),
+            'scaler_D_state_dict': scaler_D.state_dict()
+        }
+        torch.save(checkpoint, "weights/latest_model.pth")
 
         # Save best model checkpoint
         if epoch_psnr > best_psnr:
