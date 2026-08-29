@@ -20,7 +20,7 @@ def calculate_psnr(img1, img2):
     psnr = 20 * math.log10(max_pixel / math.sqrt(mse.item()))
     return psnr
 
-
+from torchvision.transforms import Normalize
 class VGGPerceptualLoss(nn.Module):
     def __init__(self, device):
         super().__init__()
@@ -30,13 +30,20 @@ class VGGPerceptualLoss(nn.Module):
             param.requires_grad = False
         self.vgg = vgg
         self.criterion = nn.L1Loss()
+        
+        # Standard ImageNet normalization for VGG
+        self.normalize = Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 
     def forward(self, x, y):
-        # VGG expects 3 channels (RGB). Slice out the NIR band if your tensors have 4 channels.
-        x_rgb = x[:, :3, :, :]
-        y_rgb = y[:, :3, :, :]
+        # 1. Slice RGB and map from [-1, 1] back to [0, 1]
+        x_rgb = (x[:, :3, :, :] + 1.0) / 2.0
+        y_rgb = (y[:, :3, :, :] + 1.0) / 2.0
         
-        # Extract features and compare
+        # 2. Apply ImageNet normalization
+        x_rgb = self.normalize(x_rgb)
+        y_rgb = self.normalize(y_rgb)
+        
+        # 3. Extract features and compare
         features_x = self.vgg(x_rgb)
         features_y = self.vgg(y_rgb)
         return self.criterion(features_x, features_y)
@@ -85,7 +92,8 @@ def train_model(
     optimizer_D = optim.Adam(net_D.parameters(), lr=lr, betas=(0.5, 0.999))
 
     # 5. Mixed Precision Scaler (Speeds up T4 training significantly)
-    scaler = torch.amp.GradScaler(enabled=torch.cuda.is_available())
+    scaler_G = torch.amp.GradScaler('cuda', enabled=torch.cuda.is_available())
+    scaler_D = torch.amp.GradScaler('cuda', enabled=torch.cuda.is_available())
 
     best_psnr = 0.0
 
@@ -130,8 +138,9 @@ def train_model(
 
                 loss_D = (loss_D_real + loss_D_fake) * 0.5
 
-            scaler.scale(loss_D).backward()
-            scaler.step(optimizer_D)
+            scaler_D.scale(loss_D).backward()
+            scaler_D.step(optimizer_D)
+            scaler_D.update()
 
             # ----------------------------------------
             # 2. Train Generator
@@ -150,11 +159,11 @@ def train_model(
                 # Balance the weights: Dial back L1 slightly, let VGG handle textures
                 loss_G = loss_G_GAN + (50.0 * loss_G_L1) + (10.0 * loss_G_VGG)
 
-            scaler.scale(loss_G).backward()
-            scaler.step(optimizer_G)
+            scaler_G.scale(loss_G).backward()
+            scaler_G.step(optimizer_G)
 
             # Update scaler after step
-            scaler.update()
+            scaler_G.update()
 
             # Track Metrics
             batch_psnr = calculate_psnr(fake_opt, opt_target)
@@ -182,7 +191,8 @@ def train_model(
             'epoch': epoch,
             'model_G_state_dict': net_G.state_dict(),
             'optimizer_G_state_dict': optimizer_G.state_dict(),
-            'scaler_state_dict': scaler.state_dict()
+            'scaler_G_state_dict': scaler_G.state_dict(),
+            'scaler_D_state_dict': scaler_D.state_dict()
         }
         torch.save(checkpoint, "weights/latest_model.pth")
 

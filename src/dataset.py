@@ -43,31 +43,47 @@ class SEN12MSDataset(Dataset):
         return len(self.valid_samples)
 
     def __getitem__(self, idx):
+        import torch.nn.functional as F
+        
         sar_path, opt_path = self.valid_samples[idx]
         
         # Load arrays using rasterio
         with rasterio.open(sar_path) as src:
-            sar_img = src.read() # [2, H, W] - VV, VH polarizations
+            sar_img = src.read().astype(np.float32)  # [2, H, W]
             
         with rasterio.open(opt_path) as src:
-            # Explicitly tell rasterio to only pull bands 1, 2, 3, and 4
-            opt_img = src.read([1, 2, 3, 4]).astype(np.float32)# [4, H, W] - RGB + NIR
+            opt_img = src.read([1, 2, 3, 4]).astype(np.float32)  # [4, H, W]
             
-        # Convert to float32
-        sar_img = sar_img.astype(np.float32)
-        opt_img = opt_img.astype(np.float32)
-        
-        # Normalize to [-1, 1] for GAN stability
-        # Note: In production, use exact dataset percentiles. Here we use min-max approximation.
-        sar_img = np.clip((sar_img - np.min(sar_img)) / (np.max(sar_img) - np.min(sar_img) + 1e-8), 0, 1) * 2 - 1
-        opt_img = np.clip((opt_img - np.min(opt_img)) / (np.max(opt_img) - np.min(opt_img) + 1e-8), 0, 1) * 2 - 1
+        # 1. Per-Channel Normalization (CRITICAL FIX)
+        for i in range(sar_img.shape[0]):
+            c_min, c_max = np.min(sar_img[i]), np.max(sar_img[i])
+            sar_img[i] = (sar_img[i] - c_min) / (c_max - c_min + 1e-8)
+            
+        for i in range(opt_img.shape[0]):
+            c_min, c_max = np.min(opt_img[i]), np.max(opt_img[i])
+            opt_img[i] = (opt_img[i] - c_min) / (c_max - c_min + 1e-8)
+            
+        # Scale to [-1, 1]
+        sar_img = sar_img * 2.0 - 1.0
+        opt_img = opt_img * 2.0 - 1.0
         
         sar_tensor = torch.from_numpy(sar_img)
         opt_tensor = torch.from_numpy(opt_img)
         
-        # For the demo pipeline, we simulate the target as the optical image itself 
-        # and add synthetic noise/clouds to create the "cloudy" input if a cloudy temporal pair isn't provided.
-        # In the full dataset, you load the specific cloudy timestamp vs clear timestamp.
+        # The clear optical image is our ground truth target
         target_tensor = opt_tensor.clone()
         
-        return sar_tensor, opt_tensor, target_tensor
+        # 2. Synthetic Cloud Generation (THE IDENTITY TRAP FIX)
+        _, H, W = opt_tensor.shape
+        # Create low-res noise and upscale it to create natural-looking "blobs"
+        noise = torch.rand(1, 1, H // 16, W // 16)
+        cloud_mask = F.interpolate(noise, size=(H, W), mode='bilinear', align_corners=False).squeeze(0)
+        
+        # Threshold the blobs to create opaque cloud regions (tweak 0.65 for more/less clouds)
+        cloud_mask = (cloud_mask > 0.65).float()
+        
+        # Apply clouds (value 1.0 in [-1, 1] scale is pure white)
+        cloudy_tensor = opt_tensor.clone()
+        cloudy_tensor = cloudy_tensor * (1.0 - cloud_mask) + cloud_mask * 1.0
+        
+        return sar_tensor, cloudy_tensor, target_tensor
