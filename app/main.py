@@ -52,14 +52,25 @@ def load_model():
 def scale_tensor_for_model(arr: np.ndarray) -> torch.Tensor:
     """
     Min-Max scales raw physical reflectance arrays to [-1, 1] for PyTorch.
-    Maintains strict scientific fidelity for the neural network.
+    Uses per-channel scaling to match `src/dataset.py`.
     """
-    arr_min, arr_max = arr.min(), arr.max()
-    if arr_max > arr_min:
-        norm = (arr - arr_min) / (arr_max - arr_min)
+    arr = arr.astype(np.float32)
+
+    if arr.ndim == 3:
+        norm = np.empty_like(arr, dtype=np.float32)
+        for c in range(arr.shape[0]):
+            c_min, c_max = arr[c].min(), arr[c].max()
+            if c_max > c_min:
+                norm[c] = (arr[c] - c_min) / (c_max - c_min + 1e-8)
+            else:
+                norm[c] = 0.0
     else:
-        norm = np.zeros_like(arr, dtype=np.float32)
-        
+        arr_min, arr_max = arr.min(), arr.max()
+        if arr_max > arr_min:
+            norm = (arr - arr_min) / (arr_max - arr_min + 1e-8)
+        else:
+            norm = np.zeros_like(arr, dtype=np.float32)
+
     return torch.from_numpy(norm * 2.0 - 1.0).to(torch.float32)
 
 def normalize_for_display(img_array: np.ndarray) -> np.ndarray:
