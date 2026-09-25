@@ -87,9 +87,18 @@ Our early experiments relied heavily on pixel-wise L1 reconstruction.
 
 That created a practical problem: when clouds covered a large region, simply preserving the visible cloudy structure could sometimes be a safer way to reduce pixel error than reconstructing the hidden terrain.
 
-So the generator objective was expanded to:
+So the original generator objective was:
 
     LG = LGAN + 50 × LL1 + 10 × LVGG
+
+Diagnostics on held-out validation/test tiles showed that cloud-obscured regions had substantially higher RGB error than visible regions. The training objective has therefore been updated to explicitly weight reconstruction inside synthetic cloud masks:
+
+    Lcloud = MAE(prediction[cloud], target[cloud])
+    Lrecon = LL1 + 2 × Lcloud
+
+    LG = LGAN + 50 × Lrecon + 10 × LVGG
+
+This makes cloud pixels receive 3× the base reconstruction weight while keeping the existing GAN and perceptual terms unchanged. The new objective is committed in the training code; a fresh training run is required before reporting new model results.
 
 ### GAN loss
 
@@ -583,9 +592,9 @@ Once the current baseline is established, several improvements become possible.
 
 ### Cloud-aware losses
 
-Visible pixels and cloud-obscured pixels should not necessarily contribute equally to the loss.
+This is now implemented in the training pipeline. Each synthetic cloud mask is returned by the dataset and used to add an explicit masked reconstruction term. The default cloud weight is lambda_cloud=2.0.
 
-A future cloud-aware objective could explicitly emphasize the regions that require reconstruction.
+Future work can make this more realistic by deriving masks from real cloudy Sentinel-2 observations instead of synthetic corruption.
 
 ### Spectral consistency
 
