@@ -112,8 +112,7 @@ def psnr(img1: torch.Tensor, img2: torch.Tensor) -> float:
 
 def normalize_for_display(img_array: np.ndarray) -> np.ndarray:
     """
-    Visualization-only scaling using a joint 2%-98% percentile range.
-    This is separate from model preprocessing.
+    Visualization-only scaling for a single image.
     """
     img_array = img_array.astype(np.float32)
 
@@ -133,6 +132,58 @@ def normalize_for_display(img_array: np.ndarray) -> np.ndarray:
         return np.power(norm, 0.85)
 
     return img_array
+
+
+def normalize_rgb_pair_for_display(
+    img1: np.ndarray,
+    img2: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Apply one shared RGB display scale to two channel-first RGB images.
+
+    This keeps output and ground-truth brightness/color relationships
+    comparable instead of contrast-stretching them independently.
+    """
+    if img1.shape != img2.shape or img1.ndim != 3 or img1.shape[0] != 3:
+        raise ValueError(
+            f"Expected two RGB arrays with shape [3,H,W], got {img1.shape} and {img2.shape}"
+        )
+
+    a = img1.astype(np.float32)
+    b = img2.astype(np.float32)
+
+    a_out = np.empty_like(a)
+    b_out = np.empty_like(b)
+
+    for ch in range(3):
+        vals = np.concatenate((a[ch].ravel(), b[ch].ravel()))
+        p2, p98 = np.percentile(vals, (2, 98))
+
+        if p98 > p2:
+            a_out[ch] = np.clip((a[ch] - p2) / (p98 - p2), 0.0, 1.0)
+            b_out[ch] = np.clip((b[ch] - p2) / (p98 - p2), 0.0, 1.0)
+        else:
+            a_out[ch] = np.zeros_like(a[ch])
+            b_out[ch] = np.zeros_like(b[ch])
+
+    return np.power(a_out, 0.85), np.power(b_out, 0.85)
+
+
+def make_difference_map(
+    rec_rgb: np.ndarray,
+    target_rgb: np.ndarray,
+) -> np.ndarray:
+    """
+    Create an RGB mean-absolute-error map for visualization.
+    Bright pixels indicate larger reconstruction differences.
+    """
+    diff = np.mean(np.abs(rec_rgb.astype(np.float32) - target_rgb.astype(np.float32)), axis=0)
+
+    p98 = np.percentile(diff, 98)
+    if p98 > 0:
+        return np.clip(diff / p98, 0.0, 1.0)
+
+    return np.zeros_like(diff)
 
 
 @st.cache_data
@@ -219,7 +270,7 @@ if st.sidebar.button("✨ Run Cloud Removal Reconstruction", type="primary"):
             with torch.no_grad():
                 reconstructed_tensor = model(sar_in, opt_in)
 
-            # Map model output from [-1, 1] to [0, 1].
+            # Map model output and ground truth from [-1, 1] to [0, 1].
             rec_img = (
                 torch.clamp(
                     (reconstructed_tensor.squeeze(0) + 1.0) / 2.0,
@@ -230,12 +281,12 @@ if st.sidebar.button("✨ Run Cloud Removal Reconstruction", type="primary"):
                 .numpy()
             )
 
-            # Convert tensors to display-space arrays.
             cloudy_img = (
                 torch.clamp((opt_cloudy + 1.0) / 2.0, 0.0, 1.0)
                 .cpu()
                 .numpy()
             )
+
             target_img = (
                 torch.clamp((opt_target + 1.0) / 2.0, 0.0, 1.0)
                 .cpu()
@@ -243,15 +294,31 @@ if st.sidebar.button("✨ Run Cloud Removal Reconstruction", type="primary"):
             )
 
             # Model band order is [R, G, B, NIR].
+            rec_rgb_display, target_rgb_display = normalize_rgb_pair_for_display(
+                rec_img[:3],
+                target_img[:3],
+            )
+
+            # Cloudy image gets its own display transform because it is a
+            # visibly corrupted input rather than an evaluation counterpart.
             cloudy_rgb = normalize_for_display(cloudy_img[:3]).transpose(1, 2, 0)
-            rec_rgb = normalize_for_display(rec_img[:3]).transpose(1, 2, 0)
-            target_rgb = normalize_for_display(target_img[:3]).transpose(1, 2, 0)
+
+            rec_rgb = rec_rgb_display.transpose(1, 2, 0)
+            target_rgb = target_rgb_display.transpose(1, 2, 0)
+
+            # Difference visualization uses the same underlying model-space
+            # RGB values, before display normalization.
+            diff_map = make_difference_map(rec_img[:3], target_img[:3])
 
             sar_disp = normalize_for_display(sar_raw[0])
 
             output_psnr = psnr(
                 reconstructed_tensor.squeeze(0).cpu(),
                 opt_target.cpu(),
+            )
+
+            rgb_mae = float(
+                np.mean(np.abs(rec_img[:3].astype(np.float32) - target_img[:3].astype(np.float32)))
             )
 
             col1, col2, col3, col4 = st.columns(4)
@@ -293,16 +360,33 @@ if st.sidebar.button("✨ Run Cloud Removal Reconstruction", type="primary"):
 
             st.divider()
 
-            m1, m2 = st.columns(2)
+            d1, d2, d3 = st.columns(3)
 
-            with m1:
-                st.success("✅ Feature fusion and reconstruction completed!")
+            with d1:
+                st.subheader("🔎 Reconstruction Difference")
+                st.image(
+                    diff_map,
+                    caption="Mean absolute RGB difference (brighter = larger error)",
+                    use_container_width=True,
+                )
 
-            with m2:
-                if math.isfinite(output_psnr):
-                    st.info(f"📈 Demo reconstruction PSNR: {output_psnr:.2f} dB")
-                else:
-                    st.info("📈 Demo reconstruction PSNR: ∞ dB")
+            with d2:
+                st.metric(
+                    "Demo PSNR",
+                    "∞ dB" if not math.isfinite(output_psnr) else f"{output_psnr:.2f} dB",
+                )
+
+            with d3:
+                st.metric("RGB MAE", f"{rgb_mae:.4f}")
+
+            st.success("✅ Feature fusion and reconstruction completed!")
+
+            st.caption(
+                "Comparison note: ClearSky Output and Ground Truth use one shared "
+                "RGB display scale so their colors and brightness can be compared "
+                "directly. The difference map shows where the reconstruction differs "
+                "most from the clean target."
+            )
 
             st.caption(
                 "Demo note: the cloud is synthetically generated using the same "
