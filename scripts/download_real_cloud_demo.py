@@ -40,8 +40,9 @@ def main():
     parser.add_argument(
         "--buffer",
         type=int,
-        default=100,
-        help="Shuffle buffer used by Hugging Face streaming. Smaller values start faster.",
+        default=0,
+        help="Shuffle buffer. 0 disables shuffle and starts reading immediately.",
+
     )
     parser.add_argument(
         "--out",
@@ -73,8 +74,15 @@ def main():
         streaming=True,
     )
 
-    if args.seed is not None:
+    if args.seed is not None and args.buffer > 0:
+        print(
+            f"   Shuffling stream with buffer={args.buffer}. "
+            "This can download a large amount before the first sample."
+        )
         ds = ds.shuffle(seed=args.seed, buffer_size=args.buffer)
+    else:
+        print("   Sequential streaming enabled; no shuffle buffer download.")
+
 
     saved = 0
 
