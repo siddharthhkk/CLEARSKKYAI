@@ -1,4 +1,3 @@
-# src/dataset.py
 import os
 import glob
 import torch
@@ -6,6 +5,7 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset
 import numpy as np
 import rasterio
+from tqdm import tqdm
 
 from preprocess import normalize_sar, normalize_optical
 
@@ -52,6 +52,8 @@ class SEN12MSDataset(Dataset):
         "ROIs1868/17",
     }
 
+    _PAIR_CACHE = {}
+
     def __init__(self, root_dir, split="train", transform=None):
         super().__init__()
 
@@ -64,52 +66,76 @@ class SEN12MSDataset(Dataset):
         self.split = split
         self.transform = transform
 
-        sar_files = (
-            glob.glob(os.path.join(root_dir, "**/s1_*.tif"), recursive=True)
-            + glob.glob(os.path.join(root_dir, "**/s1_*.TIF"), recursive=True)
-        )
-        sar_files.sort()
+        root_key = os.path.abspath(root_dir)
 
-        self.valid_samples = []
+        if root_key not in self._PAIR_CACHE:
+            sar_files = (
+                glob.glob(os.path.join(root_dir, "**/s1_*.tif"), recursive=True)
+                + glob.glob(os.path.join(root_dir, "**/s1_*.TIF"), recursive=True)
+            )
+            sar_files.sort()
 
-        for sar_path in sar_files:
-            norm_path = sar_path.replace("\\", "/")
-            parts = norm_path.split("/")
+            pairs = []
+            for sar_path in tqdm(
+                sar_files,
+                desc=f"📂 Indexing SAR/S2 pairs ({root_dir})",
+                unit="file",
+            ):
+                norm_path = sar_path.replace("\\", "/")
+                parts = norm_path.split("/")
 
-            roi = None
-            for marker in ("ROIs1158", "ROIs1868", "ROIs1970", "ROIs2017"):
-                if marker in parts:
-                    i = parts.index(marker)
-                    if i + 1 < len(parts):
-                        roi = f"{parts[i]}/{parts[i + 1]}"
-                    break
+                roi = None
+                for marker in ("ROIs1158", "ROIs1868", "ROIs1970", "ROIs2017"):
+                    if marker in parts:
+                        i = parts.index(marker)
+                        if i + 1 < len(parts):
+                            roi = f"{parts[i]}/{parts[i + 1]}"
+                        break
 
-            if roi is None:
-                continue
-
-            if self.split == "train":
-                if roi in self.TEST_ROIS or roi in self.VAL_ROIS:
-                    continue
-            elif self.split == "val":
-                if roi not in self.VAL_ROIS:
-                    continue
-            elif self.split == "test":
-                if roi not in self.TEST_ROIS:
+                if roi is None:
                     continue
 
-            opt_path = norm_path.replace("/S1/", "/S2/").replace("s1_", "s2_")
+                opt_path = norm_path.replace("/S1/", "/S2/").replace("s1_", "s2_")
 
-            if not os.path.exists(opt_path) and opt_path.endswith(".tif"):
-                opt_path_alt = opt_path[:-4] + ".TIF"
-                if os.path.exists(opt_path_alt):
-                    opt_path = opt_path_alt
+                if not os.path.isfile(opt_path) and opt_path.endswith(".tif"):
+                    opt_path_alt = opt_path[:-4] + ".TIF"
+                    if os.path.isfile(opt_path_alt):
+                        opt_path = opt_path_alt
 
-            if os.path.exists(opt_path):
-                self.valid_samples.append((sar_path, opt_path))
+                if os.path.isfile(opt_path):
+                    pairs.append((sar_path, opt_path, roi))
+
+            self._PAIR_CACHE[root_key] = pairs
+            print(f"✅ Indexed {len(pairs)} valid SAR/S2 pairs.")
+        else:
+            print(f"⚡ Using cached dataset index for {root_dir}")
+
+        pairs = self._PAIR_CACHE[root_key]
+
+        if self.split == "train":
+            self.valid_samples = [
+                (sar, opt)
+                for sar, opt, roi in pairs
+                if roi not in self.TEST_ROIS and roi not in self.VAL_ROIS
+            ]
+        elif self.split == "val":
+            self.valid_samples = [
+                (sar, opt)
+                for sar, opt, roi in pairs
+                if roi in self.VAL_ROIS
+            ]
+        elif self.split == "test":
+            self.valid_samples = [
+                (sar, opt)
+                for sar, opt, roi in pairs
+                if roi in self.TEST_ROIS
+            ]
+        else:
+            self.valid_samples = [(sar, opt) for sar, opt, _ in pairs]
 
         print(
-            f"Dataset Initialized: split={split} | "
-            f"Found {len(self.valid_samples)} valid pairs in {root_dir}"
+            f"📦 Dataset Initialized | split={split} | "
+            f"{len(self.valid_samples)} samples"
         )
 
     def __len__(self):
