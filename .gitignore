@@ -12,3 +12,4 @@ __pycache__/
 !demo_samples/
 !weights/data/
 __pycache__/
+weights/latest_model.pth
