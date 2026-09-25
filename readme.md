@@ -399,15 +399,15 @@ So the experiment is visible instead of looking like a black box.
 
 # 📊 8. Results — Current Run
 
-This section will be updated when the current 50-epoch training run finishes.
+The current 50-epoch retraining run has completed. The supplied completion log shows the final hold-out evaluation at **32.48 dB PSNR** using the best validation-selected generator. The highest validation PSNR visible in the supplied log was **37.13 dB at Epoch 48**.
 
 | Metric | Result |
 |---|---:|
-| Best validation PSNR | ⏳ Pending |
-| Best validation epoch | ⏳ Pending |
-| Final hold-out test PSNR | ⏳ Pending |
-| Final training PSNR | ⏳ Pending |
-| Peak GPU memory | ⏳ Pending |
+| Best validation PSNR observed in completion log | **37.13 dB** (Epoch 48) |
+| Final hold-out test PSNR | **32.48 dB** |
+| Final training PSNR | **34.03 dB** (Epoch 50) |
+| Peak PyTorch allocated GPU memory | **~0.96 GB** |
+| GPU | **NVIDIA Tesla T4 (~14.6 GB usable VRAM)** |
 
 ## Epoch visual record
 
@@ -463,7 +463,7 @@ This shows the visualization after the optical channels were aligned correctly.
 
 This screenshot documents the previous 25-epoch experiment and its historical 31.50 dB peak.
 
-> New epoch images from the current 50-epoch run will be added after the experiment completes.
+> The final completion screenshot is being preserved with the technical report as `temp/training_final.png`.
 
 ---
 
