@@ -12,3 +12,6 @@ Pillow>=9.5.0
 
 # Training Utilities
 tqdm>=4.65.0
+
+# Pretrained DSen2-CR checkpoint conversion
+h5py>=3.8.0
