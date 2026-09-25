@@ -104,12 +104,16 @@ def scale_tensor_for_model(arr: np.ndarray, modality: str, model_name: str):
     raise ValueError(f"Unknown modality: {modality}")
 
 
-def make_synthetic_cloud(opt_tensor: torch.Tensor, seed: int):
+def make_synthetic_cloud(
+    opt_tensor: torch.Tensor,
+    seed: int,
+    fill_value: float,
+):
     """
-    Create the same synthetic-cloud corruption used by training.
+    Create synthetic clouds in the scale expected by the selected model.
 
-    Returns:
-      cloudy image and the binary cloud mask used to corrupt it.
+    ClearSkyUNet uses [-1, 1], so white cloud = +1.
+    DSen2-CR uses [0, 5], so the synthetic cloud fill is 5.
     """
     _, h, w = opt_tensor.shape
     nh = max(1, h // 16)
@@ -127,7 +131,7 @@ def make_synthetic_cloud(opt_tensor: torch.Tensor, seed: int):
     ).squeeze(0)
 
     cloud_mask = (cloud_mask > 0.65).float()
-    cloudy = opt_tensor * (1.0 - cloud_mask) + cloud_mask * 1.0
+    cloudy = opt_tensor * (1.0 - cloud_mask) + cloud_mask * fill_value
 
     return cloudy, cloud_mask
 
@@ -307,7 +311,9 @@ if st.sidebar.button("✨ Run Cloud Removal Reconstruction", type="primary"):
             demo_seed = sum(ord(ch) for ch in os.path.basename(selected_sar)) % (2**31 - 1)
 
             if model_name == "ClearSkyUNet":
-                opt_cloudy, cloud_mask = make_synthetic_cloud(opt_target, demo_seed)
+                opt_cloudy, cloud_mask = make_synthetic_cloud(
+                    opt_target, demo_seed, fill_value=1.0
+                )
 
                 sar_in = sar_tensor.unsqueeze(0).to(device)
                 opt_in = opt_cloudy.unsqueeze(0).to(device)
@@ -327,6 +333,7 @@ if st.sidebar.button("✨ Run Cloud Removal Reconstruction", type="primary"):
                 opt_cloudy, cloud_mask = make_synthetic_cloud(
                     opt_target,
                     demo_seed,
+                    fill_value=5.0,
                 )
 
                 inp = torch.cat(
