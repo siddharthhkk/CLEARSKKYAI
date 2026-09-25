@@ -46,10 +46,22 @@ def collect_conv_weights(h5):
             for wn in g.attrs["weight_names"]:
                 wn = dec(wn)
                 short = wn.split("/")[-1]
+
+                ds = None
+                if wn in g:
+                    ds = g[wn]
+                elif wn in root:
+                    ds = root[wn]
+                elif short in g:
+                    ds = g[short]
+
+                if ds is None:
+                    continue
+
                 if short.startswith("kernel"):
-                    cur["k"] = np.asarray(g[wn])
+                    cur["k"] = np.asarray(ds)
                 elif short.startswith("bias"):
-                    cur["b"] = np.asarray(g[wn])
+                    cur["b"] = np.asarray(ds)
 
             if "k" in cur and "b" in cur:
                 pairs.append((name, cur["k"], cur["b"]))
