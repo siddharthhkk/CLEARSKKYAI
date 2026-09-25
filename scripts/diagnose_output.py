@@ -39,7 +39,7 @@ def find_demo_pairs():
     return pairs
 
 
-def make_synthetic_cloud(opt_tensor, seed):
+def make_synthetic_cloud(opt_tensor, seed, fill_value):
     _, h, w = opt_tensor.shape
     nh = max(1, h // 16)
     nw = max(1, w // 16)
@@ -57,7 +57,7 @@ def make_synthetic_cloud(opt_tensor, seed):
     ).squeeze(0)
 
     mask = (mask > 0.65).float()
-    cloudy = opt_tensor * (1.0 - mask) + mask * 1.0
+    cloudy = opt_tensor * (1.0 - mask) + mask * fill_value
 
     return cloudy, mask
 
@@ -66,7 +66,7 @@ def dsen2cr_sar_preprocess(arr):
     """Official DSen2-CR normalization: SAR -> [0, 2]."""
     x = np.asarray(arr, dtype=np.float32).copy()
 
-    mins = np.array([-25.0, -32.5], dtype=np.float32)
+    mins = np.array([-25.0, -35.0], dtype=np.float32)
     maxs = np.array([0.0, 0.0], dtype=np.float32)
 
     for i in range(2):
@@ -255,7 +255,10 @@ def main():
         else sum(ord(ch) for ch in os.path.basename(sar_path)) % (2**31 - 1)
     )
 
-    cloudy_tensor, cloud_mask = make_synthetic_cloud(target_tensor, seed)
+    fill_value = 1.0 if args.model == "clearsky" else 5.0
+    cloudy_tensor, cloud_mask = make_synthetic_cloud(
+        target_tensor, seed, fill_value
+    )
 
     with torch.no_grad():
         if args.model == "clearsky":
