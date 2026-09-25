@@ -45,7 +45,7 @@
             <tr>
                 <td class="meta-cell"><strong>Project:</strong> Multi-Modal SAR-Optical Data Fusion</td>
                 <td class="meta-cell"><strong>Domain:</strong> Satellite Imagery Cloud Removal</td>
-                <td class="meta-cell"><strong>Status:</strong> Model Trained & Deployed</td>
+                <td class="meta-cell"><strong>Status:</strong> Retrained & Hold-out Evaluated</td>
             </tr>
         </table>
     </div>
@@ -57,9 +57,9 @@
     <table class="stat-grid">
         <tr>
             <td style="width: 25%; padding-right: 4px;"><div class="stat-card"><div class="stat-num">91 GB</div><div class="stat-label">Total Raw Dataset</div></div></td>
-            <td style="width: 25%; padding-left: 2px; padding-right: 2px;"><div class="stat-card"><div class="stat-num">31.50 dB</div><div class="stat-label">Peak Model PSNR</div></div></td>
-            <td style="width: 25%; padding-left: 2px; padding-right: 2px;"><div class="stat-card"><div class="stat-num">25 Epochs</div><div class="stat-label">PyTorch Training</div></div></td>
-            <td style="width: 25%; padding-left: 4px;"><div class="stat-card"><div class="stat-num">100% Pass</div><div class="stat-label">Pipeline Operational</div></div></td>
+            <td style="width: 25%; padding-left: 2px; padding-right: 2px;"><div class="stat-card"><div class="stat-num">37.13 dB*</div><div class="stat-label">Best Visible Val PSNR</div></div></td>
+            <td style="width: 25%; padding-left: 2px; padding-right: 2px;"><div class="stat-card"><div class="stat-num">50 Epochs</div><div class="stat-label">Corrected Retraining</div></div></td>
+            <td style="width: 25%; padding-left: 4px;"><div class="stat-card"><div class="stat-num">32.48 dB</div><div class="stat-label">Hold-out Test PSNR</div></div></td>
         </tr>
     </table>
 
@@ -86,19 +86,51 @@
         $$L_{G} = L_{GAN} + 50.0 \times L_{L1} + 10.0 \times L_{VGG}$$
     </div>
 
-    <h3>3.2 Quantitative Benchmarks</h3>
-    <p>Following the architectural refinement, full-scale model training was executed using <code>python src/train.py</code> across 25 epochs.</p>
-    <ul>
-        <li><strong>Convergence Speed:</strong> The model crossed 28 dB PSNR within the first 3 epochs, demonstrating fast feature alignment between SAR structural radar maps and multi-spectral optical targets.</li>
-        <li><strong>Peak Performance:</strong> Reached a peak Peak Signal-to-Noise Ratio (PSNR) of <strong>31.50 dB at Epoch 10</strong> with Generator Loss lowering to 6.1690.</li>
-        <li><strong>Final Stability:</strong> Maintained high reconstruction fidelity throughout late epochs, completing Epoch 25 at an average PSNR of ~30.50 dB and exporting optimized weights to <code>weights/best_model.pth</code>.</li>
-    </ul>
-
+    <h3>3.2 Quantitative Benchmarks — Corrected 50-Epoch Retraining</h3>
+    <p>The historical 25-epoch experiment remains the project's earlier baseline, with a previously reported peak of <strong>31.50 dB PSNR at Epoch 10</strong>. After the training-pipeline audit, we started a <strong>fresh 50-epoch run</strong> rather than resuming those weights. This keeps the historical result intact while giving the corrected preprocessing and evaluation protocol its own benchmark.</p>
+    <p>The completed run used a <strong>single NVIDIA Tesla T4</strong> with approximately <strong>14.6 GB usable VRAM</strong>, batch size <strong>4</strong>, learning rate <code>2e-4</code>, L1 weight <code>50</code>, VGG weight <code>10</code>, seed <code>42</code>, CUDA automatic mixed precision, ROI-level train/validation/test separation, deterministic validation/test corruption, and validation-based checkpoint selection.</p>
+    <table class="log-table">
+      <thead>
+        <tr><th style="width: 32%;">Measurement</th><th style="width: 23%;">Result</th><th style="width: 45%;">Interpretation</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Training batches / epoch</strong></td>
+          <td>2,033 batches</td>
+          <td>At batch size 4, this corresponds to roughly 8.1k training samples per epoch.</td>
+        </tr>
+        <tr>
+          <td><strong>Observed validation PSNR</strong></td>
+          <td><strong>37.13 dB</strong> (Epoch 48, visible log)</td>
+          <td>This is the highest validation PSNR visible in the supplied completion log; it should be distinguished from the final hold-out score.</td>
+        </tr>
+        <tr>
+          <td><strong>Final hold-out test PSNR</strong></td>
+          <td><strong>32.48 dB</strong></td>
+          <td>Computed after training using the saved best-validation generator, without selecting the checkpoint using test data.</td>
+        </tr>
+        <tr>
+          <td><strong>Training duration / epoch</strong></td>
+          <td>~3m 38–40s</td>
+          <td>Observed throughput was approximately 9.2–9.5 batches/s on the Tesla T4.</td>
+        </tr>
+        <tr>
+          <td><strong>Peak PyTorch allocated GPU memory</strong></td>
+          <td>~0.96 GB</td>
+          <td>Low allocation did not imply idle GPU compute; during training the T4 was observed near 95% utilization and 70 W power draw.</td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="card">
+      <div class="card-title"><span class="badge-fixed">Completed</span> Corrected Training Result</div>
+      <p>The full 50-epoch experiment completed successfully. The terminal log shows checkpoints saved through Epoch 50, followed by loading the best validation model and reporting a <strong>32.48 dB final hold-out test PSNR</strong>.</p>
+      <p><strong>*Important:</strong> 37.13 dB is the highest validation PSNR visible in the screenshot supplied with this report update. The complete epoch-by-epoch log should be treated as the authoritative source for the exact global best validation epoch if an earlier epoch exceeded that value.</p>
+    </div>
     <div class="image-container">
-        <img src="Screenshot 2026-08-28 at 11-19-22 deploy-model-devbox ⚡siddharthhkk.png" alt="Terminal execution showing 25 epochs of PyTorch model training with PSNR metrics" />
-        <div class="caption">
-            Figure 1: Live terminal logs showing 25 epochs of U-Net model training in PyTorch, achieving a peak PSNR of 31.50 dB.
-        </div>
+      <img src="training_final.png" alt="Completed 50-epoch ClearSky-AI training log showing final validation and hold-out test results" />
+      <div class="caption">
+        Figure 5: Completion log for the corrected 50-epoch retraining run, including the final hold-out test PSNR of 32.48 dB. Save the supplied completion screenshot as <code>temp/training_final.png</code>.
+      </div>
     </div>
 
     <h2>4. Debugging Log & Comprehensive Technical Resolutions</h2>
@@ -193,6 +225,6 @@
         <li><strong>Visualization Accuracy:</strong> Satellite optical channels map accurately to standard RGB space, generating high-fidelity natural color outputs.</li>
     </ol>
 
-    <div class="footer">ClearSky-AI Technical Report • Generated for Architectural Audit, System Benchmarking & Technical Logs</div>
+    <div class="footer">ClearSky-AI Technical Report • Updated after corrected 50-epoch retraining and hold-out evaluation</div>
 </body>
 </html>
