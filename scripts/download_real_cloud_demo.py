@@ -43,9 +43,14 @@ def decode_row(row):
         dtype=np.int16,
     ).reshape(opt_shape).astype(np.float32)
 
-    # Mirror stores optical data as HWC.
-    cloudy = np.transpose(cloudy, (2, 0, 1)).copy()
-    target = np.transpose(target, (2, 0, 1)).copy()
+    # The Dataset Viewer currently exposes SAR and optical arrays in HWC
+    # shapes: SAR [H,W,2], optical [H,W,13].
+    if sar.ndim == 3 and sar.shape[-1] == 2:
+        sar = np.transpose(sar, (2, 0, 1)).copy()
+
+    if cloudy.ndim == 3 and cloudy.shape[-1] == 13:
+        cloudy = np.transpose(cloudy, (2, 0, 1)).copy()
+        target = np.transpose(target, (2, 0, 1)).copy()
 
     return sar, cloudy, target
 
@@ -112,10 +117,13 @@ def main():
         sar, cloudy, target = decode_row(row)
 
         if sar.shape != (2, 256, 256):
+            print(f"⚠️ Skipping row {item.get('row_idx', '?')}: SAR shape {sar.shape}")
             continue
         if cloudy.shape != (13, 256, 256):
+            print(f"⚠️ Skipping row {item.get('row_idx', '?')}: cloudy shape {cloudy.shape}")
             continue
         if target.shape != (13, 256, 256):
+            print(f"⚠️ Skipping row {item.get('row_idx', '?')}: target shape {target.shape}")
             continue
 
         sample_id = item.get("row_idx", args.offset + saved)
