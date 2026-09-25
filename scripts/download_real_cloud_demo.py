@@ -40,8 +40,8 @@ def main():
     parser.add_argument(
         "--buffer",
         type=int,
-        default=5000,
-        help="Shuffle buffer used by Hugging Face streaming.",
+        default=100,
+        help="Shuffle buffer used by Hugging Face streaming. Smaller values start faster.",
     )
     parser.add_argument(
         "--out",
