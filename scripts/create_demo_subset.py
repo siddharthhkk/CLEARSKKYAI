@@ -3,6 +3,7 @@ import glob
 import os
 import random
 import shutil
+from collections import Counter
 
 
 SOURCE_DATA = "data/"
@@ -27,10 +28,19 @@ TEST_ROIS = {
     "ROIs2017/140",
 }
 
+# Same validation ROIs used by src/dataset.py.
+VAL_ROIS = {
+    "ROIs2017/22",
+    "ROIs1970/65",
+    "ROIs2017/117",
+    "ROIs1868/127",
+    "ROIs1868/17",
+}
+
 
 def get_roi(path):
     """Extract the dataset ROI label, e.g. ROIs2017/108."""
-    path = path.replace("\\", "/")
+    path = path.replace("\\\\", "/")
     parts = path.split("/")
 
     for marker in ("ROIs1158", "ROIs1868", "ROIs1970", "ROIs2017"):
@@ -44,7 +54,7 @@ def get_roi(path):
 
 def find_optical_path(sar_path):
     """Map an S1 path to its matching S2 path."""
-    path = sar_path.replace("\\", "/")
+    path = sar_path.replace("\\\\", "/")
     opt_path = path.replace("/S1/", "/S2/").replace("s1_", "s2_")
 
     if os.path.isfile(opt_path):
@@ -58,9 +68,16 @@ def find_optical_path(sar_path):
     return None
 
 
-def create_demo_subset(pairs_count=DEFAULT_PAIRS, seed=DEFAULT_SEED, test_only=True):
+def create_demo_subset(
+    pairs_count=DEFAULT_PAIRS,
+    seed=DEFAULT_SEED,
+    roi_mode="test",
+):
     if pairs_count <= 0:
         raise ValueError("pairs_count must be greater than 0")
+
+    if roi_mode not in {"test", "nontrain", "all"}:
+        raise ValueError("roi_mode must be test, nontrain, or all")
 
     if not os.path.isdir(SOURCE_DATA):
         print(f"❌ Source dataset not found: {SOURCE_DATA}")
@@ -90,7 +107,14 @@ def create_demo_subset(pairs_count=DEFAULT_PAIRS, seed=DEFAULT_SEED, test_only=T
     for sar_path in sar_files:
         roi = get_roi(sar_path)
 
-        if test_only and roi not in TEST_ROIS:
+        if roi_mode == "test":
+            allowed = roi in TEST_ROIS
+        elif roi_mode == "nontrain":
+            allowed = roi in TEST_ROIS or roi in VAL_ROIS
+        else:
+            allowed = True
+
+        if not allowed:
             continue
 
         opt_path = find_optical_path(sar_path)
@@ -100,9 +124,14 @@ def create_demo_subset(pairs_count=DEFAULT_PAIRS, seed=DEFAULT_SEED, test_only=T
 
     print(f"📦 Valid S1/S2 pairs found: {len(candidates)}")
 
-    if test_only:
-        rois = sorted({roi for _, _, roi in candidates})
-        print(f"🧪 Restricting demo selection to {len(rois)} held-out TEST ROIs.")
+    if roi_mode == "test":
+        mode_text = "held-out TEST ROIs"
+    elif roi_mode == "nontrain":
+        mode_text = "VALIDATION + TEST ROIs (no training ROIs)"
+    else:
+        mode_text = "ALL ROIs"
+
+    print(f"🎯 Sampling mode: {mode_text}")
 
     if not candidates:
         print("❌ No valid paired samples matched the selected ROI filter.")
@@ -115,7 +144,7 @@ def create_demo_subset(pairs_count=DEFAULT_PAIRS, seed=DEFAULT_SEED, test_only=T
 
     copied_count = 0
     total_bytes = 0
-    used_rois = set()
+    roi_counts = Counter()
 
     for sar_path, opt_path, roi in selected:
         sar_dest = os.path.join(DEMO_DIR, "sar", os.path.basename(sar_path))
@@ -126,14 +155,18 @@ def create_demo_subset(pairs_count=DEFAULT_PAIRS, seed=DEFAULT_SEED, test_only=T
 
         total_bytes += os.path.getsize(sar_path) + os.path.getsize(opt_path)
         copied_count += 1
-        used_rois.add(roi)
+        roi_counts[roi] += 1
 
     total_mb = total_bytes / (1024 * 1024)
+
+    print("🌍 ROI distribution:")
+    for roi, count in sorted(roi_counts.items()):
+        print(f"   {roi}: {count} pairs")
 
     print("--------------------------------------------------")
     print("✅ Demo package created successfully!")
     print(f"📊 Tile pairs copied : {copied_count}")
-    print(f"🌍 Unique test ROIs  : {len(used_rois)}")
+    print(f"🌍 Unique ROIs       : {len(roi_counts)}")
     print(f"🎲 Random seed       : {seed}")
     print(f"💾 Total size        : {total_mb:.2f} MB")
     print("--------------------------------------------------")
@@ -156,15 +189,30 @@ if __name__ == "__main__":
         help=f"Random seed for selecting different samples (default: {DEFAULT_SEED})",
     )
     parser.add_argument(
+        "--nontrain",
+        action="store_true",
+        help="Sample from validation + test ROIs only; excludes all training ROIs.",
+    )
+    parser.add_argument(
         "--all-rois",
         action="store_true",
-        help="Allow sampling from all ROIs instead of held-out test ROIs.",
+        help="Allow sampling from all ROIs.",
     )
 
     args = parser.parse_args()
 
+    if args.nontrain and args.all_rois:
+        parser.error("--nontrain and --all-rois cannot be used together")
+
+    if args.all_rois:
+        mode = "all"
+    elif args.nontrain:
+        mode = "nontrain"
+    else:
+        mode = "test"
+
     create_demo_subset(
         pairs_count=args.pairs,
         seed=args.seed,
-        test_only=not args.all_rois,
+        roi_mode=mode,
     )
