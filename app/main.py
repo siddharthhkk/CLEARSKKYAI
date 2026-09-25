@@ -60,13 +60,13 @@ def load_model(model_name):
         )
 
         if not os.path.exists(weights_path):
-            st.sidebar.error(
+            raise FileNotFoundError(
                 "DSen2-CR weights not found. Download the public HDF5 checkpoint "
                 "and convert it with scripts/convert_dsen2cr_weights.py."
             )
-        else:
-            model.load_state_dict(torch.load(weights_path, map_location=device))
-            st.sidebar.success("Loaded DSen2-CR pretrained CARL weights")
+
+        model.load_state_dict(torch.load(weights_path, map_location=device))
+        st.sidebar.success("Loaded DSen2-CR pretrained CARL weights")
 
     model.eval()
     return model, device
