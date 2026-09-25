@@ -16,3 +16,5 @@ weights/latest_model.pth
 
 weights/model_SARcarl.hdf5
 weights/dsen2cr_sar_carl.pth
+# Streamed real-cloud demo data (keep dataset files out of Git)
+real_cloud_demo/
