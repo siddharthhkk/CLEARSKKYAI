@@ -33,10 +33,15 @@ def psnr_from_sse(sse, n):
     return 20 * math.log10(2.0 / math.sqrt(mse))
 
 
+def count_params(model):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+
 class VGGPerceptualLoss(nn.Module):
     def __init__(self, device):
         super().__init__()
 
+        print("🧠 Loading pretrained VGG19 perceptual network...")
         vgg = models.vgg19(weights="DEFAULT").features[:36].eval().to(device)
         for param in vgg.parameters():
             param.requires_grad = False
@@ -47,6 +52,7 @@ class VGGPerceptualLoss(nn.Module):
             mean=[0.485, 0.456, 0.406],
             std=[0.229, 0.224, 0.225],
         )
+        print("✅ VGG19 ready.")
 
     def forward(self, x, y):
         x_rgb = (x[:, :3] + 1.0) / 2.0
@@ -105,11 +111,25 @@ def train_model(
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"🚀 Training on device: {device}")
 
+    if device.type == "cuda":
+        print(f"🎮 GPU: {torch.cuda.get_device_name(0)}")
+        print(
+            f"💾 VRAM: "
+            f"{torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB"
+        )
+
+    print(
+        f"⚙️ Config | Epochs: {epochs} | Batch: {batch_size} | "
+        f"LR: {lr} | L1: {lambda_l1} | VGG: {lambda_vgg} | "
+        f"Seed: {seed} | Resume: {resume}"
+    )
+
     os.makedirs("weights", exist_ok=True)
 
     # -------------------------------------------------
     # 1. Official ROI-level train / validation / test
     # -------------------------------------------------
+    print("📂 Building dataset index...")
     train_dataset = SEN12MSDataset(root_dir=data_dir, split="train")
     val_dataset = SEN12MSDataset(root_dir=data_dir, split="val")
     test_dataset = SEN12MSDataset(root_dir=data_dir, split="test")
@@ -164,11 +184,24 @@ def train_model(
         pin_memory=pin,
     )
 
+    print(
+        f"🔢 Batches per epoch | Train: {len(train_loader)} | "
+        f"Val: {len(val_loader)} | Test: {len(test_loader)}"
+    )
+
     # -------------------------------------------------
     # 2. Initialize models and losses
     # -------------------------------------------------
+    print("🏗️ Initializing models...")
     net_G = ClearSkyUNet().to(device)
     net_D = PatchGANDiscriminator().to(device)
+
+    g_p = count_params(net_G)
+    d_p = count_params(net_D)
+
+    print(f"   Generator      : ClearSkyUNet | {g_p:,} trainable params ({g_p/1e6:.2f}M)")
+    print(f"   Discriminator   : PatchGAN       | {d_p:,} trainable params ({d_p/1e6:.2f}M)")
+    print(f"   Total trainable: {g_p + d_p:,} params ({(g_p+d_p)/1e6:.2f}M)")
 
     criterion_GAN = nn.BCEWithLogitsLoss()
     criterion_L1 = nn.L1Loss()
@@ -194,6 +227,7 @@ def train_model(
                 f"Resume requested but {checkpoint_path} was not found."
             )
 
+        print(f"📥 Loading checkpoint: {checkpoint_path}")
         checkpoint = torch.load(checkpoint_path, map_location=device)
 
         net_G.load_state_dict(checkpoint["model_G_state_dict"])
@@ -225,6 +259,9 @@ def train_model(
         net_G.train()
         net_D.train()
 
+        if device.type == "cuda":
+            torch.cuda.reset_peak_memory_stats()
+
         running_loss_G = 0.0
         running_loss_D = 0.0
         train_sse = 0.0
@@ -232,7 +269,7 @@ def train_model(
 
         pbar = tqdm(
             train_loader,
-            desc=f"Epoch [{epoch}/{epochs}]",
+            desc=f"🚂 Epoch [{epoch}/{epochs}]",
             unit="batch",
             leave=True,
         )
@@ -335,6 +372,7 @@ def train_model(
             batch_psnr = calculate_psnr(fake_opt.detach(), opt_target)
 
             pbar.set_postfix(
+                Step=f"{pbar.n}/{len(train_loader)}",
                 Loss_G=f"{loss_G.item():.3f}",
                 Loss_D=f"{loss_D.item():.3f}",
                 PSNR=f"{batch_psnr:.2f}dB",
@@ -347,6 +385,7 @@ def train_model(
         # ----------------------------------------
         # C. Validation
         # ----------------------------------------
+        print(f"🔎 Validation | Epoch {epoch}/{epochs}")
         val_psnr = evaluate_psnr(net_G, val_loader, device)
 
         print(
@@ -357,12 +396,16 @@ def train_model(
             f"Val PSNR: {val_psnr:.2f} dB"
         )
 
+        if device.type == "cuda":
+            peak_vram = torch.cuda.max_memory_allocated() / 1024**3
+            print(f"🧮 Peak GPU memory this epoch: {peak_vram:.2f} GB")
+
         # Model selection uses validation only.
         if val_psnr > best_val_psnr:
             best_val_psnr = val_psnr
             torch.save(net_G.state_dict(), "weights/best_model.pth")
             print(
-                f"  🏆 New Best Model Saved! "
+                f"🏆 New Best Model Saved! "
                 f"(Validation PSNR: {best_val_psnr:.2f} dB)"
             )
 
@@ -384,10 +427,12 @@ def train_model(
             "python_rng_state": random.getstate(),
         }
         torch.save(checkpoint, "weights/latest_model.pth")
+        print(f"💾 Checkpoint saved: epoch {epoch}")
 
     # ----------------------------------------
     # 5. Final hold-out test
     # ----------------------------------------
+    print("🧪 Loading best validation model for final hold-out test...")
     best_state = torch.load("weights/best_model.pth", map_location=device)
     net_G.load_state_dict(best_state)
 
