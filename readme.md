@@ -586,6 +586,17 @@ That is the key idea behind moving from a simple image-to-image reconstruction s
 
 ---
 
+## ☁️ Real-cloud DSen2-CR quick test
+
+To test the pretrained DSen2-CR model on genuine cloudy/cloud-free SEN12MS-CR pairs without downloading the full dataset, use the streaming helper:
+
+    pip install -r requirements.txt
+    python scripts/download_real_cloud_demo.py --samples 5 --seed 42
+
+The helper streams the public `Hermanni/sen12mscr` mirror instead of downloading the full dataset. The mirror contains paired Sentinel-1, cloudy Sentinel-2, and cloud-free Sentinel-2 patches and is released under CC BY 4.0. Hugging Face documents `streaming=True` for accessing large datasets without downloading them locally.
+
+The generated `real_cloud_demo/` directory is ignored by Git. These samples are intended for local inference/debugging, not as a replacement for the official DSen2-CR test protocol.
+
 # 🧠 12.5 Pretrained DSen2-CR Baseline
 
 Because a new full training run is currently unavailable, ClearSky-AI also supports the public DSen2-CR SAR-optical cloud-removal model as an external pretrained baseline.
