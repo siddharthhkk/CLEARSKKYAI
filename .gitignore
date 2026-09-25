@@ -13,3 +13,6 @@ __pycache__/
 !weights/data/
 __pycache__/
 weights/latest_model.pth
+
+weights/model_SARcarl.hdf5
+weights/dsen2cr_sar_carl.pth
