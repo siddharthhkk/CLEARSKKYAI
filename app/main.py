@@ -65,7 +65,16 @@ def load_model(model_name):
                 "and convert it with scripts/convert_dsen2cr_weights.py."
             )
 
-        model.load_state_dict(torch.load(weights_path, map_location=device))
+        state = torch.load(weights_path, map_location="cpu")
+        if isinstance(state, dict) and "state_dict" in state:
+            state = state["state_dict"]
+        state = {
+            k: v.to(device=device, dtype=torch.float32)
+            for k, v in state.items()
+            if torch.is_tensor(v)
+        }
+        model.load_state_dict(state, strict=True)
+        model = model.to(device=device, dtype=torch.float32)
         st.sidebar.success("Loaded DSen2-CR pretrained CARL weights")
 
     model.eval()
@@ -323,7 +332,10 @@ if st.sidebar.button("✨ Run Cloud Removal Reconstruction", type="primary"):
                 inp = torch.cat(
                     [opt_cloudy, sar_tensor],
                     dim=0,
-                ).unsqueeze(0).to(device)
+                ).unsqueeze(0).to(device=device, dtype=torch.float32)
+
+                # Keep both inputs and model explicitly on the same device.
+                model = model.to(device=device, dtype=torch.float32)
 
                 with torch.no_grad():
                     reconstructed_tensor = model(inp)
