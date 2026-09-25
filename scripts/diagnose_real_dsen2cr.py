@@ -103,18 +103,29 @@ def main():
     in_rgb = np.clip(cloudy_in[ridx] / 5.0, 0.0, 1.0)
 
     err = np.abs(out_rgb - tgt_rgb)
+    base_err = np.abs(in_rgb - tgt_rgb)
+
+    out_psnr = calc_psnr(out_rgb, tgt_rgb)
+    base_psnr = calc_psnr(in_rgb, tgt_rgb)
 
     print(f"\n📂 Sample: {os.path.basename(sample_path)}")
     for key in ("season", "scene", "patch", "source"):
         if key in d:
             print(f"   {key}: {d[key].item() if d[key].shape == () else d[key]}")
 
-    print("\nRGB metrics on REAL cloudy input")
-    print(f"  RGB MAE: {err.mean():.6f}")
-    print(f"  R MAE: {err[0].mean():.6f}")
-    print(f"  G MAE: {err[1].mean():.6f}")
-    print(f"  B MAE: {err[2].mean():.6f}")
-    print(f"  RGB PSNR: {calc_psnr(out_rgb, tgt_rgb):.2f} dB")
+    print("\nRGB metrics")
+    print("  REAL CLOUDY INPUT (before DSen2-CR)")
+    print(f"    RGB MAE: {base_err.mean():.6f}")
+    print(f"    RGB PSNR: {base_psnr:.2f} dB")
+
+    print("  DSEN2-CR OUTPUT")
+    print(f"    RGB MAE: {err.mean():.6f}")
+    print(f"    R MAE: {err[0].mean():.6f}")
+    print(f"    G MAE: {err[1].mean():.6f}")
+    print(f"    B MAE: {err[2].mean():.6f}")
+    print(f"    RGB PSNR: {out_psnr:.2f} dB")
+
+    print(f"  PSNR change: {out_psnr - base_psnr:+.2f} dB")
 
     # This is a real-cloud sample, but this mirror does not provide a pixel mask.
     # Do not label a difference-derived heuristic as a true cloud mask.
