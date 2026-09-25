@@ -6,7 +6,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader
 from tqdm import tqdm
 import torchvision.models as models
 from torchvision.transforms import Normalize
@@ -17,12 +17,20 @@ from models import ClearSkyUNet, PatchGANDiscriminator
 
 def calculate_psnr(img1, img2):
     """Calculate PSNR for tensors normalized to [-1, 1]."""
-    mse = torch.mean((img1 - img2) ** 2)
-    if mse.item() == 0:
+    mse = torch.mean((img1 - img2) ** 2).item()
+    if mse == 0:
         return float("inf")
 
-    max_pixel = 2.0
-    return 20 * math.log10(max_pixel / math.sqrt(mse.item()))
+    return 20 * math.log10(2.0 / math.sqrt(mse))
+
+
+def psnr_from_sse(sse, n):
+    """Calculate PSNR from aggregate squared error and element count."""
+    if n == 0 or sse == 0:
+        return float("inf")
+
+    mse = sse / n
+    return 20 * math.log10(2.0 / math.sqrt(mse))
 
 
 class VGGPerceptualLoss(nn.Module):
@@ -58,6 +66,32 @@ def _set_requires_grad(model, requires_grad):
         param.requires_grad = requires_grad
 
 
+def evaluate_psnr(net_G, loader, device):
+    """Evaluate aggregate PSNR over a complete loader."""
+    net_G.eval()
+
+    sse = 0.0
+    n = 0
+
+    with torch.no_grad():
+        for sar, opt_cloudy, opt_target in loader:
+            sar = sar.to(device, non_blocking=True)
+            opt_cloudy = opt_cloudy.to(device, non_blocking=True)
+            opt_target = opt_target.to(device, non_blocking=True)
+
+            if device.type == "cuda":
+                with torch.autocast(device_type="cuda"):
+                    fake_opt = net_G(sar, opt_cloudy)
+            else:
+                fake_opt = net_G(sar, opt_cloudy)
+
+            diff = fake_opt.float() - opt_target.float()
+            sse += torch.sum(diff * diff).item()
+            n += diff.numel()
+
+    return psnr_from_sse(sse, n)
+
+
 def train_model(
     data_dir="data/",
     epochs=25,
@@ -65,7 +99,6 @@ def train_model(
     lr=0.0002,
     lambda_l1=50.0,
     lambda_vgg=10.0,
-    val_ratio=0.1,
     seed=42,
     resume=False,
 ):
@@ -75,39 +108,36 @@ def train_model(
     os.makedirs("weights", exist_ok=True)
 
     # -------------------------------------------------
-    # 1. Build deterministic train/validation split
+    # 1. Official ROI-level train / validation / test
     # -------------------------------------------------
-    train_base = SEN12MSDataset(root_dir=data_dir, is_train=True)
-    val_base = SEN12MSDataset(root_dir=data_dir, is_train=False)
+    train_dataset = SEN12MSDataset(root_dir=data_dir, split="train")
+    val_dataset = SEN12MSDataset(root_dir=data_dir, split="val")
+    test_dataset = SEN12MSDataset(root_dir=data_dir, split="test")
 
-    if len(train_base) == 0:
-        print("❌ Dataset is empty! Ensure data is extracted.")
-        return
-
-    if len(train_base) != len(val_base):
-        raise RuntimeError("Train and validation datasets do not contain the same pairs.")
-
-    n = len(train_base)
-    if n < 2:
-        raise RuntimeError("Need at least 2 image pairs for a train/validation split.")
-
-    g = torch.Generator().manual_seed(seed)
-    indices = torch.randperm(n, generator=g).tolist()
-
-    val_size = max(1, int(round(n * val_ratio)))
-    if val_size >= n:
-        val_size = n - 1
-
-    val_idx = indices[:val_size]
-    train_idx = indices[val_size:]
-
-    train_dataset = Subset(train_base, train_idx)
-    val_dataset = Subset(val_base, val_idx)
+    if len(train_dataset) == 0:
+        raise RuntimeError(
+            "Training split is empty. Check the SEN12MS-CR-TS data structure."
+        )
+    if len(val_dataset) == 0:
+        raise RuntimeError(
+            "Validation split is empty. The expected validation ROIs may be missing."
+        )
+    if len(test_dataset) == 0:
+        raise RuntimeError(
+            "Test split is empty. The expected official hold-out ROIs may be missing."
+        )
 
     print(
-        f"📚 Dataset split | Train: {len(train_dataset)} | "
-        f"Validation: {len(val_dataset)} | Seed: {seed}"
+        f"📚 Dataset | Train: {len(train_dataset)} | "
+        f"Val: {len(val_dataset)} | Test: {len(test_dataset)}"
     )
+
+    # Keep the split reproducible.
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
     pin = torch.cuda.is_available()
 
@@ -127,8 +157,16 @@ def train_model(
         pin_memory=pin,
     )
 
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=4,
+        pin_memory=pin,
+    )
+
     # -------------------------------------------------
-    # 2. Initialize models
+    # 2. Initialize models and losses
     # -------------------------------------------------
     net_G = ClearSkyUNet().to(device)
     net_D = PatchGANDiscriminator().to(device)
@@ -169,7 +207,6 @@ def train_model(
         start_epoch = checkpoint["epoch"] + 1
         best_val_psnr = checkpoint.get("best_val_psnr", -float("inf"))
 
-        # Restore RNG state when available.
         if "torch_rng_state" in checkpoint:
             torch.set_rng_state(checkpoint["torch_rng_state"])
         if "numpy_rng_state" in checkpoint:
@@ -183,7 +220,7 @@ def train_model(
         )
 
     # -------------------------------------------------
-    # 4. Training
+    # 4. Training loop
     # -------------------------------------------------
     for epoch in range(start_epoch, epochs + 1):
         net_G.train()
@@ -191,7 +228,8 @@ def train_model(
 
         running_loss_G = 0.0
         running_loss_D = 0.0
-        running_psnr = 0.0
+        train_sse = 0.0
+        train_n = 0
 
         pbar = tqdm(
             train_loader,
@@ -205,49 +243,82 @@ def train_model(
             opt_cloudy = opt_cloudy.to(device, non_blocking=True)
             opt_target = opt_target.to(device, non_blocking=True)
 
-            device_type = "cuda" if torch.cuda.is_available() else "cpu"
+            if device.type == "cuda":
+                with torch.autocast(device_type="cuda"):
+                    # ----------------------------------------
+                    # A. Train Discriminator
+                    # ----------------------------------------
+                    _set_requires_grad(net_D, True)
+                    optimizer_D.zero_grad(set_to_none=True)
 
-            # ----------------------------------------
-            # A. Train Discriminator
-            # ----------------------------------------
-            _set_requires_grad(net_D, True)
-            optimizer_D.zero_grad(set_to_none=True)
+                    fake_opt = net_G(sar, opt_cloudy)
 
-            with torch.autocast(
-                device_type=device_type,
-                enabled=torch.cuda.is_available(),
-            ):
+                    pred_real = net_D(sar, opt_cloudy, opt_target)
+                    pred_fake = net_D(sar, opt_cloudy, fake_opt.detach())
+
+                    loss_D_real = criterion_GAN(
+                        pred_real, torch.ones_like(pred_real)
+                    )
+                    loss_D_fake = criterion_GAN(
+                        pred_fake, torch.zeros_like(pred_fake)
+                    )
+                    loss_D = 0.5 * (loss_D_real + loss_D_fake)
+
+                scaler_D.scale(loss_D).backward()
+                scaler_D.step(optimizer_D)
+                scaler_D.update()
+
+                # ----------------------------------------
+                # B. Train Generator
+                # ----------------------------------------
+                _set_requires_grad(net_D, False)
+                optimizer_G.zero_grad(set_to_none=True)
+
+                with torch.autocast(device_type="cuda"):
+                    pred_fake_g = net_D(sar, opt_cloudy, fake_opt)
+
+                    loss_G_GAN = criterion_GAN(
+                        pred_fake_g, torch.ones_like(pred_fake_g)
+                    )
+                    loss_G_L1 = criterion_L1(fake_opt, opt_target)
+                    loss_G_VGG = criterion_VGG(fake_opt, opt_target)
+
+                    loss_G = (
+                        loss_G_GAN
+                        + lambda_l1 * loss_G_L1
+                        + lambda_vgg * loss_G_VGG
+                    )
+
+                scaler_G.scale(loss_G).backward()
+                scaler_G.step(optimizer_G)
+                scaler_G.update()
+
+            else:
+                _set_requires_grad(net_D, True)
+                optimizer_D.zero_grad(set_to_none=True)
+
                 fake_opt = net_G(sar, opt_cloudy)
 
                 pred_real = net_D(sar, opt_cloudy, opt_target)
                 pred_fake = net_D(sar, opt_cloudy, fake_opt.detach())
 
-                target_real = torch.ones_like(pred_real)
-                target_fake = torch.zeros_like(pred_fake)
-
-                loss_D_real = criterion_GAN(pred_real, target_real)
-                loss_D_fake = criterion_GAN(pred_fake, target_fake)
+                loss_D_real = criterion_GAN(
+                    pred_real, torch.ones_like(pred_real)
+                )
+                loss_D_fake = criterion_GAN(
+                    pred_fake, torch.zeros_like(pred_fake)
+                )
                 loss_D = 0.5 * (loss_D_real + loss_D_fake)
 
-            scaler_D.scale(loss_D).backward()
-            scaler_D.step(optimizer_D)
-            scaler_D.update()
+                loss_D.backward()
+                optimizer_D.step()
 
-            # ----------------------------------------
-            # B. Train Generator
-            # ----------------------------------------
-            _set_requires_grad(net_D, False)
-            optimizer_G.zero_grad(set_to_none=True)
+                _set_requires_grad(net_D, False)
+                optimizer_G.zero_grad(set_to_none=True)
 
-            with torch.autocast(
-                device_type=device_type,
-                enabled=torch.cuda.is_available(),
-            ):
                 pred_fake_g = net_D(sar, opt_cloudy, fake_opt)
-
                 loss_G_GAN = criterion_GAN(
-                    pred_fake_g,
-                    torch.ones_like(pred_fake_g),
+                    pred_fake_g, torch.ones_like(pred_fake_g)
                 )
                 loss_G_L1 = criterion_L1(fake_opt, opt_target)
                 loss_G_VGG = criterion_VGG(fake_opt, opt_target)
@@ -258,16 +329,19 @@ def train_model(
                     + lambda_vgg * loss_G_VGG
                 )
 
-            scaler_G.scale(loss_G).backward()
-            scaler_G.step(optimizer_G)
-            scaler_G.update()
+                loss_G.backward()
+                optimizer_G.step()
 
             _set_requires_grad(net_D, True)
 
-            batch_psnr = calculate_psnr(fake_opt.detach(), opt_target)
+            diff = fake_opt.detach().float() - opt_target.float()
+            train_sse += torch.sum(diff * diff).item()
+            train_n += diff.numel()
+
             running_loss_G += loss_G.item()
             running_loss_D += loss_D.item()
-            running_psnr += batch_psnr
+
+            batch_psnr = calculate_psnr(fake_opt.detach(), opt_target)
 
             pbar.set_postfix(
                 Loss_G=f"{loss_G.item():.3f}",
@@ -277,29 +351,12 @@ def train_model(
 
         epoch_loss_G = running_loss_G / len(train_loader)
         epoch_loss_D = running_loss_D / len(train_loader)
-        train_psnr = running_psnr / len(train_loader)
+        train_psnr = psnr_from_sse(train_sse, train_n)
 
         # -------------------------------------------------
-        # 5. Validation
+        # 5. Validation — used for model selection
         # -------------------------------------------------
-        net_G.eval()
-        val_psnr_total = 0.0
-
-        with torch.no_grad():
-            for sar, opt_cloudy, opt_target in val_loader:
-                sar = sar.to(device, non_blocking=True)
-                opt_cloudy = opt_cloudy.to(device, non_blocking=True)
-                opt_target = opt_target.to(device, non_blocking=True)
-
-                with torch.autocast(
-                    device_type=device_type,
-                    enabled=torch.cuda.is_available(),
-                ):
-                    fake_opt = net_G(sar, opt_cloudy)
-
-                val_psnr_total += calculate_psnr(fake_opt, opt_target)
-
-        val_psnr = val_psnr_total / len(val_loader)
+        val_psnr = evaluate_psnr(net_G, val_loader, device)
 
         print(
             f"📊 Epoch [{epoch}/{epochs}] | "
@@ -309,9 +366,6 @@ def train_model(
             f"Val PSNR: {val_psnr:.2f} dB"
         )
 
-        # -------------------------------------------------
-        # 6. Save complete resumable checkpoint
-        # -------------------------------------------------
         if val_psnr > best_val_psnr:
             best_val_psnr = val_psnr
             torch.save(net_G.state_dict(), "weights/best_model.pth")
@@ -330,7 +384,6 @@ def train_model(
             "scaler_D_state_dict": scaler_D.state_dict(),
             "best_val_psnr": best_val_psnr,
             "seed": seed,
-            "val_ratio": val_ratio,
             "lambda_l1": lambda_l1,
             "lambda_vgg": lambda_vgg,
             "torch_rng_state": torch.get_rng_state(),
@@ -338,6 +391,19 @@ def train_model(
             "python_rng_state": random.getstate(),
         }
         torch.save(checkpoint, "weights/latest_model.pth")
+
+    # -------------------------------------------------
+    # 6. Final hold-out test — never used for model selection
+    # -------------------------------------------------
+    best_state = torch.load("weights/best_model.pth", map_location=device)
+    net_G.load_state_dict(best_state)
+
+    test_psnr = evaluate_psnr(net_G, test_loader, device)
+
+    print(
+        f"🧪 Final Hold-out Test PSNR: {test_psnr:.2f} dB "
+        f"(best model selected only by validation PSNR)"
+    )
 
 
 if __name__ == "__main__":
