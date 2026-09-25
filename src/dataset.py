@@ -20,6 +20,9 @@ class SEN12MSDataset(Dataset):
 
     Training pairs use a clean optical target and a synthetic-cloud
     version of that same target as the cloudy optical input.
+
+    When is_train=False, the synthetic cloud mask is deterministic so
+    validation metrics are stable across epochs.
     """
 
     def __init__(self, root_dir, is_train=True, transform=None):
@@ -28,16 +31,19 @@ class SEN12MSDataset(Dataset):
         self.is_train = is_train
         self.transform = transform
 
-        # Look for SAR files (supports both extensions).
         self.sar_files = (
             glob.glob(os.path.join(root_dir, "**/s1_*.tif"), recursive=True)
             + glob.glob(os.path.join(root_dir, "**/s1_*.TIF"), recursive=True)
         )
+        self.sar_files.sort()
 
-        # Match Sentinel-1 and Sentinel-2 tiles by their shared filename key.
         self.valid_samples = []
         for sar_path in self.sar_files:
-            opt_path = sar_path.replace("/S1/", "/S2/").replace("s1_", "s2_")
+            sar_parts = sar_path.replace("\\", "/").split("/")
+            opt_path = "/".join(
+                "S2" if part == "S1" else part for part in sar_parts
+            )
+            opt_path = opt_path.replace("s1_", "s2_")
 
             if not os.path.exists(opt_path) and opt_path.endswith(".tif"):
                 opt_path_alt = opt_path.replace(".tif", ".TIF")
@@ -55,40 +61,47 @@ class SEN12MSDataset(Dataset):
     def __len__(self):
         return len(self.valid_samples)
 
+    def _make_cloudy(self, opt_tensor, idx):
+        """Create synthetic clouds; deterministic for validation."""
+        _, h, w = opt_tensor.shape
+        nh = max(1, h // 16)
+        nw = max(1, w // 16)
+
+        if self.is_train:
+            noise = torch.rand(1, 1, nh, nw)
+        else:
+            # Stable per-sample validation corruption.
+            g = torch.Generator()
+            g.manual_seed(42 + idx)
+            noise = torch.rand(1, 1, nh, nw, generator=g)
+
+        cloud_mask = F.interpolate(
+            noise, size=(h, w), mode="bilinear", align_corners=False
+        ).squeeze(0)
+
+        cloud_mask = (cloud_mask > 0.65).float()
+
+        return opt_tensor * (1.0 - cloud_mask) + cloud_mask * 1.0
+
     def __getitem__(self, idx):
         sar_path, opt_path = self.valid_samples[idx]
 
-        # Sentinel-1: [VV, VH]
         with rasterio.open(sar_path) as src:
             sar_img = src.read().astype(np.float32)
 
         # Sentinel-2: [B04, B03, B02, B08] = [R, G, B, NIR]
         with rasterio.open(opt_path) as src:
+            if src.count < 8:
+                raise ValueError(
+                    f"Expected at least 8 Sentinel-2 bands in {opt_path}, "
+                    f"found {src.count}"
+                )
             opt_img = src.read([4, 3, 2, 8]).astype(np.float32)
 
-        # Fixed physical normalization shared with inference.
         sar_tensor = normalize_sar(sar_img)
         opt_tensor = normalize_optical(opt_img)
 
-        # Clean optical image is the ground-truth target.
         target_tensor = opt_tensor.clone()
-
-        # Synthetic cloud generation (training only).
-        # Low-resolution noise + bilinear upsampling produces cloud-like blobs.
-        _, h, w = opt_tensor.shape
-        nh = max(1, h // 16)
-        nw = max(1, w // 16)
-        noise = torch.rand(1, 1, nh, nw)
-        cloud_mask = F.interpolate(
-            noise, size=(h, w), mode="bilinear", align_corners=False
-        ).squeeze(0)
-
-        # Threshold to create opaque cloud regions.
-        cloud_mask = (cloud_mask > 0.65).float()
-
-        # Optical tensors are in [-1, 1], so +1 is pure white.
-        cloudy_tensor = (
-            opt_tensor * (1.0 - cloud_mask) + cloud_mask * 1.0
-        )
+        cloudy_tensor = self._make_cloudy(opt_tensor, idx)
 
         return sar_tensor, cloudy_tensor, target_tensor
