@@ -75,12 +75,12 @@ def scale_tensor_for_model(arr: np.ndarray, modality: str) -> torch.Tensor:
     raise ValueError(f"Unknown modality: {modality}")
 
 
-def make_synthetic_cloud(opt_tensor: torch.Tensor, seed: int) -> torch.Tensor:
+def make_synthetic_cloud(opt_tensor: torch.Tensor, seed: int):
     """
     Create the same synthetic-cloud corruption used by training.
 
-    A low-resolution random field is upsampled, thresholded at 0.65,
-    and clouded pixels are replaced by the normalized cloud value +1.
+    Returns:
+      cloudy image and the binary cloud mask used to corrupt it.
     """
     _, h, w = opt_tensor.shape
     nh = max(1, h // 16)
@@ -98,8 +98,9 @@ def make_synthetic_cloud(opt_tensor: torch.Tensor, seed: int) -> torch.Tensor:
     ).squeeze(0)
 
     cloud_mask = (cloud_mask > 0.65).float()
+    cloudy = opt_tensor * (1.0 - cloud_mask) + cloud_mask * 1.0
 
-    return opt_tensor * (1.0 - cloud_mask) + cloud_mask * 1.0
+    return cloudy, cloud_mask
 
 
 def psnr(img1: torch.Tensor, img2: torch.Tensor) -> float:
@@ -261,7 +262,7 @@ if st.sidebar.button("✨ Run Cloud Removal Reconstruction", type="primary"):
             # shows the same synthetic cloud pattern when rerun.
             demo_seed = sum(ord(ch) for ch in os.path.basename(selected_sar)) % (2**31 - 1)
 
-            opt_cloudy = make_synthetic_cloud(opt_target, demo_seed)
+            opt_cloudy, cloud_mask = make_synthetic_cloud(opt_target, demo_seed)
 
             sar_in = sar_tensor.unsqueeze(0).to(device)
             opt_in = opt_cloudy.unsqueeze(0).to(device)
@@ -317,9 +318,39 @@ if st.sidebar.button("✨ Run Cloud Removal Reconstruction", type="primary"):
                 opt_target.cpu(),
             )
 
-            rgb_mae = float(
-                np.mean(np.abs(rec_img[:3].astype(np.float32) - target_img[:3].astype(np.float32)))
-            )
+            rec_rgb_arr = rec_img[:3].astype(np.float32)
+            target_rgb_arr = target_img[:3].astype(np.float32)
+
+            rgb_abs_err = np.abs(rec_rgb_arr - target_rgb_arr)
+            rgb_mae = float(np.mean(rgb_abs_err))
+
+            # Cloud-aware metrics: evaluate only pixels that were actually hidden.
+            cloud_px = cloud_mask.squeeze(0).cpu().numpy().astype(bool)
+            visible_px = ~cloud_px
+
+            if np.any(cloud_px):
+                cloud_err = rgb_abs_err[:, cloud_px]
+                cloud_mae = float(np.mean(cloud_err))
+                cloud_mse = float(
+                    np.mean(
+                        (rec_rgb_arr[:, cloud_px] - target_rgb_arr[:, cloud_px]) ** 2
+                    )
+                )
+                cloud_psnr = (
+                    float("inf")
+                    if cloud_mse <= 0
+                    else 20.0 * math.log10(2.0 / math.sqrt(cloud_mse))
+                )
+            else:
+                cloud_mae = float("nan")
+                cloud_psnr = float("nan")
+
+            if np.any(visible_px):
+                visible_mae = float(np.mean(rgb_abs_err[:, visible_px]))
+            else:
+                visible_mae = float("nan")
+
+            cloud_mask_disp = cloud_px.astype(np.float32)
 
             col1, col2, col3, col4 = st.columns(4)
 
@@ -360,24 +391,38 @@ if st.sidebar.button("✨ Run Cloud Removal Reconstruction", type="primary"):
 
             st.divider()
 
-            d1, d2, d3 = st.columns(3)
+            d1, d2, d3, d4 = st.columns(4)
 
             with d1:
-                st.subheader("🔎 Reconstruction Difference")
+                st.subheader("☁️ Cloud Mask")
                 st.image(
-                    diff_map,
-                    caption="Mean absolute RGB difference (brighter = larger error)",
+                    cloud_mask_disp,
+                    caption="1 = hidden/reconstructed region",
                     use_container_width=True,
                 )
 
             with d2:
-                st.metric(
-                    "Demo PSNR",
-                    "∞ dB" if not math.isfinite(output_psnr) else f"{output_psnr:.2f} dB",
+                st.subheader("🔎 Reconstruction Difference")
+                st.image(
+                    diff_map,
+                    caption="Brighter = larger RGB error",
+                    use_container_width=True,
                 )
 
             with d3:
-                st.metric("RGB MAE", f"{rgb_mae:.4f}")
+                st.metric(
+                    "Overall PSNR",
+                    "∞ dB" if not math.isfinite(output_psnr) else f"{output_psnr:.2f} dB",
+                )
+                st.metric("Overall RGB MAE", f"{rgb_mae:.4f}")
+
+            with d4:
+                st.metric(
+                    "Cloud PSNR",
+                    "∞ dB" if not math.isfinite(cloud_psnr) else f"{cloud_psnr:.2f} dB",
+                )
+                st.metric("Cloud MAE", f"{cloud_mae:.4f}")
+                st.metric("Visible MAE", f"{visible_mae:.4f}")
 
             st.success("✅ Feature fusion and reconstruction completed!")
 
@@ -396,7 +441,7 @@ if st.sidebar.button("✨ Run Cloud Removal Reconstruction", type="primary"):
             )
 
             del sar_in, opt_in, target_in, reconstructed_tensor
-            del sar_raw, opt_raw, sar_tensor, opt_cloudy, opt_target
+            del sar_raw, opt_raw, sar_tensor, opt_cloudy, opt_target, cloud_mask
 
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
