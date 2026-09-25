@@ -586,6 +586,26 @@ That is the key idea behind moving from a simple image-to-image reconstruction s
 
 ---
 
+# 🧠 12.5 Pretrained DSen2-CR Baseline
+
+Because a new full training run is currently unavailable, ClearSky-AI also supports the public DSen2-CR SAR-optical cloud-removal model as an external pretrained baseline.
+
+DSen2-CR was developed specifically for Sentinel-2 cloud removal using Sentinel-1 SAR guidance. The published architecture takes 13 Sentinel-2 bands plus 2 SAR channels and reconstructs all 13 optical bands. The original authors provide a pretrained checkpoint trained with the CARL loss.
+
+In ClearSky-AI, the external Keras HDF5 checkpoint is converted into a PyTorch state dictionary and exposed as a separate model backend in the Streamlit app.
+
+The two models are kept conceptually separate:
+
+    ClearSkyUNet
+        ↓
+    our custom architecture + weights
+
+    DSen2-CR
+        ↓
+    published architecture + published pretrained weights
+
+The DSen2-CR backend is an inference baseline. It does not replace the ClearSkyUNet model or its experimental results.
+
 # 🔬 13. Further Research Directions
 
 Once the current baseline is established, several improvements become possible.
