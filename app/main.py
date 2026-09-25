@@ -376,15 +376,13 @@ if st.sidebar.button("✨ Run Cloud Removal Reconstruction", type="primary"):
                 rec_rgb_arr = rec_img[:3].astype(np.float32)
                 target_rgb_arr = target_img[:3].astype(np.float32)
             else:
-                out_n = torch.clamp(metric_out / 5.0, 0.0, 1.0)
-                tgt_n = torch.clamp(metric_tgt / 5.0, 0.0, 1.0)
-                output_psnr = float(
-                    20.0
-                    * math.log10(
-                        1.0 / math.sqrt(
-                            torch.mean((out_n.float() - tgt_n.float()) ** 2).item()
-                        )
-                    )
+                # DSen2-CR output is on CUDA while the target tensor is still on CPU.
+                # Move both to CPU before calculating the display PSNR.
+                out_n = torch.clamp(metric_out.cpu() / 5.0, 0.0, 1.0)
+                tgt_n = torch.clamp(metric_tgt.cpu() / 5.0, 0.0, 1.0)
+                mse = torch.mean((out_n.float() - tgt_n.float()) ** 2).item()
+                output_psnr = float("inf") if mse <= 0 else 20.0 * math.log10(
+                    1.0 / math.sqrt(mse)
                 )
                 rec_rgb_arr = rec_img[rgb_idx].astype(np.float32)
                 target_rgb_arr = target_img[rgb_idx].astype(np.float32)
