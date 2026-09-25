@@ -633,6 +633,28 @@ Ignored by Git.
 
 A smaller tracked subset used for demonstration and lightweight testing.
 
+The demo generator now samples **only from the held-out test ROIs by default**. This means the local demo can use scenes from regions that were excluded from model training and validation-based checkpoint selection.
+
+Generate a fresh 60-pair demo set:
+
+```bash
+python scripts/create_demo_subset.py
+```
+
+Use a different random seed to get a different selection from the same held-out test ROIs:
+
+```bash
+python scripts/create_demo_subset.py --seed 123
+```
+
+Change the number of pairs:
+
+```bash
+python scripts/create_demo_subset.py --pairs 30 --seed 123
+```
+
+Sampling from all ROIs is still possible explicitly with `--all-rois`, but the default is the held-out test set.
+
 ### weights/
 
 Model checkpoints and trained model weights.
