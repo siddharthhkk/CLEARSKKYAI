@@ -18,6 +18,7 @@ PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, ".."))
 # Dynamically add the 'src' folder to Python's path
 sys.path.append(os.path.join(PROJECT_ROOT, "src"))
 from models import ClearSkyUNet  # type: ignore
+from dsen2cr import DSen2CR  # type: ignore
 from preprocess import normalize_sar, normalize_optical  # type: ignore
 
 st.set_page_config(page_title="ClearSky-AI | Cloud Removal Demo", layout="wide")
@@ -38,39 +39,58 @@ st.caption(f"Multi-Modal Cloud Removal Pipeline — Active Mode: {MODE_TEXT}")
 
 
 @st.cache_resource
-def load_model():
-    """Load the trained generator."""
+def load_model(model_name):
+    """Load either the project model or the pretrained DSen2-CR backend."""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = ClearSkyUNet().to(device)
 
-    weights_path = os.path.join(PROJECT_ROOT, "weights", "best_model.pth")
+    if model_name == "ClearSkyUNet":
+        model = ClearSkyUNet().to(device)
+        weights_path = os.path.join(PROJECT_ROOT, "weights", "best_model.pth")
 
-    if os.path.exists(weights_path):
-        model.load_state_dict(torch.load(weights_path, map_location=device))
-        st.sidebar.success("Loaded trained weights (best_model.pth)")
+        if os.path.exists(weights_path):
+            model.load_state_dict(torch.load(weights_path, map_location=device))
+            st.sidebar.success("Loaded ClearSkyUNet: best_model.pth")
+        else:
+            st.sidebar.warning("ClearSkyUNet weights not found.")
+
     else:
-        st.sidebar.warning("Weights not found. Running with initialized architecture.")
+        model = DSen2CR().to(device)
+        weights_path = os.path.join(
+            PROJECT_ROOT, "weights", "dsen2cr_sar_carl.pth"
+        )
+
+        if not os.path.exists(weights_path):
+            st.sidebar.error(
+                "DSen2-CR weights not found. Download the public HDF5 checkpoint "
+                "and convert it with scripts/convert_dsen2cr_weights.py."
+            )
+        else:
+            model.load_state_dict(torch.load(weights_path, map_location=device))
+            st.sidebar.success("Loaded DSen2-CR pretrained CARL weights")
 
     model.eval()
     return model, device
 
 
-def scale_tensor_for_model(arr: np.ndarray, modality: str) -> torch.Tensor:
-    """
-    Apply the same fixed-range preprocessing used during training.
+def scale_tensor_for_model(arr: np.ndarray, modality: str, model_name: str):
+    """Apply preprocessing expected by the selected model."""
+    if model_name == "ClearSkyUNet":
+        if modality == "sar":
+            return normalize_sar(arr)
+        if modality == "optical":
+            return normalize_optical(arr)
+    else:
+        # Public DSen2-CR was trained with 13 optical channels represented
+        # approximately in [0, 5] and SAR channels in [0, 2].
+        if modality == "sar":
+            x = np.asarray(arr, dtype=np.float32)
+            x = np.clip(x, -25.0, 0.0)
+            return torch.from_numpy((x + 25.0) / 12.5).float()
 
-    SAR:
-      VV -> clip [-25, 0] dB
-      VH -> clip [-32.5, 0] dB
-
-    Optical:
-      B04, B03, B02, B08 -> clip [0, 10000]
-    """
-    if modality == "sar":
-        return normalize_sar(arr)
-
-    if modality == "optical":
-        return normalize_optical(arr)
+        if modality == "optical":
+            x = np.asarray(arr, dtype=np.float32)
+            x = np.clip(x, 0.0, 10000.0)
+            return torch.from_numpy(x / 2000.0).float()
 
     raise ValueError(f"Unknown modality: {modality}")
 
@@ -227,7 +247,17 @@ def get_valid_dataset_pairs(data_path):
 # ==========================================
 st.sidebar.header("🕹️ Control Panel")
 
-model, device = load_model()
+model_name = st.sidebar.selectbox(
+    "Model Backend",
+    ["ClearSkyUNet", "DSen2-CR (Pretrained)"],
+)
+
+if model_name == "DSen2-CR (Pretrained)":
+    model_key = "DSen2-CR"
+else:
+    model_key = "ClearSkyUNet"
+
+model, device = load_model(model_key)
 valid_pairs = get_valid_dataset_pairs(DATA_PATH)
 
 if not valid_pairs:
@@ -247,57 +277,73 @@ selected_opt = valid_pairs[selected_sar]
 if st.sidebar.button("✨ Run Cloud Removal Reconstruction", type="primary"):
     with st.spinner("Generating synthetic cloud + running SAR-Optical reconstruction..."):
         try:
-            # Load SAR and the exact four Sentinel-2 model bands.
+            # Load SAR and either 4 or all 13 Sentinel-2 bands.
             with rasterio.open(selected_sar) as src_sar, rasterio.open(selected_opt) as src_opt:
                 sar_raw = src_sar.read().astype(np.float32)
 
-                # [B04, B03, B02, B08] = [R, G, B, NIR]
-                opt_raw = src_opt.read([4, 3, 2, 8]).astype(np.float32)
+                if model_name == "ClearSkyUNet":
+                    opt_raw = src_opt.read([4, 3, 2, 8]).astype(np.float32)
+                else:
+                    if src_opt.count < 13:
+                        raise ValueError(
+                            f"DSen2-CR requires 13 Sentinel-2 bands, found {src_opt.count}"
+                        )
+                    opt_raw = src_opt.read(
+                        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
+                    ).astype(np.float32)
 
-            # Exact same preprocessing as training.
-            sar_tensor = scale_tensor_for_model(sar_raw, "sar")
-            opt_target = scale_tensor_for_model(opt_raw, "optical")
+            sar_tensor = scale_tensor_for_model(sar_raw, "sar", model_name)
+            opt_target = scale_tensor_for_model(opt_raw, "optical", model_name)
 
-            # Use a stable seed derived from the selected tile so the demo
-            # shows the same synthetic cloud pattern when rerun.
             demo_seed = sum(ord(ch) for ch in os.path.basename(selected_sar)) % (2**31 - 1)
 
-            opt_cloudy, cloud_mask = make_synthetic_cloud(opt_target, demo_seed)
+            if model_name == "ClearSkyUNet":
+                opt_cloudy, cloud_mask = make_synthetic_cloud(opt_target, demo_seed)
 
-            sar_in = sar_tensor.unsqueeze(0).to(device)
-            opt_in = opt_cloudy.unsqueeze(0).to(device)
-            target_in = opt_target.unsqueeze(0).to(device)
+                sar_in = sar_tensor.unsqueeze(0).to(device)
+                opt_in = opt_cloudy.unsqueeze(0).to(device)
 
-            with torch.no_grad():
-                reconstructed_tensor = model(sar_in, opt_in)
+                with torch.no_grad():
+                    reconstructed_tensor = model(sar_in, opt_in)
 
-            # Map model output and ground truth from [-1, 1] to [0, 1].
-            rec_img = (
-                torch.clamp(
-                    (reconstructed_tensor.squeeze(0) + 1.0) / 2.0,
-                    0.0,
-                    1.0,
+                metric_out = reconstructed_tensor.squeeze(0)
+                metric_tgt = opt_target
+                rec_img = torch.clamp((metric_out + 1.0) / 2.0, 0.0, 1.0).cpu().numpy()
+                cloudy_img = torch.clamp((opt_cloudy + 1.0) / 2.0, 0.0, 1.0).cpu().numpy()
+                target_img = torch.clamp((opt_target + 1.0) / 2.0, 0.0, 1.0).cpu().numpy()
+
+            else:
+                # DSen2-CR expects [13 optical, 2 SAR] in that order and
+                # reconstructs all 13 optical channels in [0, 5] space.
+                opt_cloudy, cloud_mask = make_synthetic_cloud(
+                    opt_target,
+                    demo_seed,
                 )
-                .cpu()
-                .numpy()
-            )
 
-            cloudy_img = (
-                torch.clamp((opt_cloudy + 1.0) / 2.0, 0.0, 1.0)
-                .cpu()
-                .numpy()
-            )
+                inp = torch.cat(
+                    [opt_cloudy, sar_tensor],
+                    dim=0,
+                ).unsqueeze(0).to(device)
 
-            target_img = (
-                torch.clamp((opt_target + 1.0) / 2.0, 0.0, 1.0)
-                .cpu()
-                .numpy()
-            )
+                with torch.no_grad():
+                    reconstructed_tensor = model(inp)
 
-            # Model band order is [R, G, B, NIR].
+                metric_out = reconstructed_tensor.squeeze(0)
+                metric_tgt = opt_target
+
+                rec_img = torch.clamp(metric_out / 5.0, 0.0, 1.0).cpu().numpy()
+                cloudy_img = torch.clamp(opt_cloudy / 5.0, 0.0, 1.0).cpu().numpy()
+                target_img = torch.clamp(opt_target / 5.0, 0.0, 1.0).cpu().numpy()
+
+            # RGB is [B04, B03, B02] = indices [3, 2, 1].
+            if model_name == "ClearSkyUNet":
+                rgb_idx = [0, 1, 2]
+            else:
+                rgb_idx = [3, 2, 1]
+
             rec_rgb_display, target_rgb_display = normalize_rgb_pair_for_display(
-                rec_img[:3],
-                target_img[:3],
+                rec_img[rgb_idx],
+                target_img[rgb_idx],
             )
 
             # Cloudy image gets its own display transform because it is a
@@ -313,13 +359,23 @@ if st.sidebar.button("✨ Run Cloud Removal Reconstruction", type="primary"):
 
             sar_disp = normalize_for_display(sar_raw[0])
 
-            output_psnr = psnr(
-                reconstructed_tensor.squeeze(0).cpu(),
-                opt_target.cpu(),
-            )
-
-            rec_rgb_arr = rec_img[:3].astype(np.float32)
-            target_rgb_arr = target_img[:3].astype(np.float32)
+            if model_name == "ClearSkyUNet":
+                output_psnr = psnr(metric_out.cpu(), metric_tgt.cpu())
+                rec_rgb_arr = rec_img[:3].astype(np.float32)
+                target_rgb_arr = target_img[:3].astype(np.float32)
+            else:
+                out_n = torch.clamp(metric_out / 5.0, 0.0, 1.0)
+                tgt_n = torch.clamp(metric_tgt / 5.0, 0.0, 1.0)
+                output_psnr = float(
+                    20.0
+                    * math.log10(
+                        1.0 / math.sqrt(
+                            torch.mean((out_n.float() - tgt_n.float()) ** 2).item()
+                        )
+                    )
+                )
+                rec_rgb_arr = rec_img[rgb_idx].astype(np.float32)
+                target_rgb_arr = target_img[rgb_idx].astype(np.float32)
 
             rgb_abs_err = np.abs(rec_rgb_arr - target_rgb_arr)
             rgb_mae = float(np.mean(rgb_abs_err))
@@ -440,7 +496,11 @@ if st.sidebar.button("✨ Run Cloud Removal Reconstruction", type="primary"):
                 "clean Sentinel-2 tiles."
             )
 
-            del sar_in, opt_in, target_in, reconstructed_tensor
+            del reconstructed_tensor
+            if model_name == "ClearSkyUNet":
+                del sar_in, opt_in
+            else:
+                del inp
             del sar_raw, opt_raw, sar_tensor, opt_cloudy, opt_target, cloud_mask
 
             if torch.cuda.is_available():
