@@ -41,6 +41,7 @@ def main():
     nested_dirs = [
         os.path.join(out, "data", "raw", "clear"),
         os.path.join(out, "data", "raw_samples"),
+        os.path.join(out, "data", "raw", "clear", "data", "raw", "clear"),
     ]
 
     moved = []
