@@ -12,3 +12,12 @@ Pillow>=9.5.0
 
 # Training Utilities
 tqdm>=4.65.0
+
+# Pretrained DSen2-CR checkpoint conversion
+h5py>=3.8.0
+
+# Stream small real-cloud SEN12MS-CR samples without downloading the full dataset
+datasets>=4.0.0
+
+# Public LISS-IV sample/reference downloads
+huggingface_hub>=0.30.0

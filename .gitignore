@@ -1,6 +1,13 @@
 api
 # Ignore dataset archives and extracted raw data
-data/
+data/*
+!data/raw/
+!data/raw/cloudy/
+!data/raw/cloudy/.gitkeep
+!data/raw/clear/
+!data/raw/clear/.gitkeep
+!data/raw/sar/
+!data/raw/sar/.gitkeep
 *.tar.gz
 *.npy
 
@@ -12,3 +19,11 @@ __pycache__/
 !demo_samples/
 !weights/data/
 __pycache__/
+weights/latest_model.pth
+
+weights/model_SARcarl.hdf5
+weights/dsen2cr_sar_carl.pth
+# Streamed real-cloud demo data (keep dataset files out of Git)
+real_cloud_demo/
+
+real_cloud_diverse/

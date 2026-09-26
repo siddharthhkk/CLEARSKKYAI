@@ -72,6 +72,13 @@ def _set_requires_grad(model, requires_grad):
         param.requires_grad = requires_grad
 
 
+def masked_l1(pred, target, mask):
+    """Mean absolute error over pixels selected by mask."""
+    mask = mask.expand_as(pred)
+    denom = mask.sum().clamp_min(1.0)
+    return torch.sum(torch.abs(pred - target) * mask) / denom
+
+
 def evaluate_psnr(net_G, loader, device):
     """Evaluate aggregate PSNR over a complete loader."""
     net_G.eval()
@@ -80,7 +87,7 @@ def evaluate_psnr(net_G, loader, device):
     n = 0
 
     with torch.no_grad():
-        for sar, opt_cloudy, opt_target in loader:
+        for sar, opt_cloudy, opt_target, _cloud_mask in loader:
             sar = sar.to(device, non_blocking=True)
             opt_cloudy = opt_cloudy.to(device, non_blocking=True)
             opt_target = opt_target.to(device, non_blocking=True)
@@ -105,6 +112,7 @@ def train_model(
     lr=0.0002,
     lambda_l1=50.0,
     lambda_vgg=10.0,
+    lambda_cloud=2.0,
     seed=42,
     resume=False,
 ):
@@ -121,7 +129,7 @@ def train_model(
     print(
         f"⚙️ Config | Epochs: {epochs} | Batch: {batch_size} | "
         f"LR: {lr} | L1: {lambda_l1} | VGG: {lambda_vgg} | "
-        f"Seed: {seed} | Resume: {resume}"
+        f"Cloud: {lambda_cloud} | Seed: {seed} | Resume: {resume}"
     )
 
     os.makedirs("weights", exist_ok=True)
@@ -266,6 +274,8 @@ def train_model(
         running_loss_D = 0.0
         train_sse = 0.0
         train_n = 0
+        cloud_sum = 0.0
+        cloud_n = 0
 
         pbar = tqdm(
             train_loader,
@@ -274,10 +284,11 @@ def train_model(
             leave=True,
         )
 
-        for sar, opt_cloudy, opt_target in pbar:
+        for sar, opt_cloudy, opt_target, cloud_mask in pbar:
             sar = sar.to(device, non_blocking=True)
             opt_cloudy = opt_cloudy.to(device, non_blocking=True)
             opt_target = opt_target.to(device, non_blocking=True)
+            cloud_mask = cloud_mask.to(device, non_blocking=True)
 
             # ----------------------------------------
             # A. Train Discriminator
@@ -332,11 +343,13 @@ def train_model(
                         pred_fake_g, torch.ones_like(pred_fake_g)
                     )
                     loss_G_L1 = criterion_L1(fake_opt, opt_target)
+                    loss_G_cloud = masked_l1(fake_opt, opt_target, cloud_mask)
                     loss_G_VGG = criterion_VGG(fake_opt, opt_target)
+                    loss_G_recon = loss_G_L1 + lambda_cloud * loss_G_cloud
 
                     loss_G = (
                         loss_G_GAN
-                        + lambda_l1 * loss_G_L1
+                        + lambda_l1 * loss_G_recon
                         + lambda_vgg * loss_G_VGG
                     )
 
@@ -349,11 +362,13 @@ def train_model(
                     pred_fake_g, torch.ones_like(pred_fake_g)
                 )
                 loss_G_L1 = criterion_L1(fake_opt, opt_target)
+                loss_G_cloud = masked_l1(fake_opt, opt_target, cloud_mask)
                 loss_G_VGG = criterion_VGG(fake_opt, opt_target)
+                loss_G_recon = loss_G_L1 + lambda_cloud * loss_G_cloud
 
                 loss_G = (
                     loss_G_GAN
-                    + lambda_l1 * loss_G_L1
+                    + lambda_l1 * loss_G_recon
                     + lambda_vgg * loss_G_VGG
                 )
 
@@ -365,6 +380,8 @@ def train_model(
             diff = fake_opt.detach().float() - opt_target.float()
             train_sse += torch.sum(diff * diff).item()
             train_n += diff.numel()
+            cloud_sum += cloud_mask.sum().item()
+            cloud_n += cloud_mask.numel()
 
             running_loss_G += loss_G.item()
             running_loss_D += loss_D.item()
@@ -381,6 +398,7 @@ def train_model(
         epoch_loss_G = running_loss_G / len(train_loader)
         epoch_loss_D = running_loss_D / len(train_loader)
         train_psnr = psnr_from_sse(train_sse, train_n)
+        cloud_coverage = 100.0 * cloud_sum / max(cloud_n, 1)
 
         # ----------------------------------------
         # C. Validation
@@ -393,7 +411,8 @@ def train_model(
             f"Loss G: {epoch_loss_G:.4f} | "
             f"Loss D: {epoch_loss_D:.4f} | "
             f"Train PSNR: {train_psnr:.2f} dB | "
-            f"Val PSNR: {val_psnr:.2f} dB"
+            f"Val PSNR: {val_psnr:.2f} dB | "
+            f"Cloud: {cloud_coverage:.2f}%"
         )
 
         if device.type == "cuda":
@@ -422,6 +441,7 @@ def train_model(
             "seed": seed,
             "lambda_l1": lambda_l1,
             "lambda_vgg": lambda_vgg,
+            "lambda_cloud": lambda_cloud,
             "torch_rng_state": torch.get_rng_state(),
             "numpy_rng_state": np.random.get_state(),
             "python_rng_state": random.getstate(),

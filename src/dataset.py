@@ -163,7 +163,8 @@ class SEN12MSDataset(Dataset):
 
         cloud_mask = (cloud_mask > 0.65).float()
 
-        return opt_tensor * (1.0 - cloud_mask) + cloud_mask * 1.0
+        cloudy = opt_tensor * (1.0 - cloud_mask) + cloud_mask * 1.0
+        return cloudy, cloud_mask
 
     def __getitem__(self, idx):
         sar_path, opt_path = self.valid_samples[idx]
@@ -184,6 +185,6 @@ class SEN12MSDataset(Dataset):
         opt_tensor = normalize_optical(opt_img)
 
         target_tensor = opt_tensor.clone()
-        cloudy_tensor = self._make_cloudy(opt_tensor, idx)
+        cloudy_tensor, cloud_mask = self._make_cloudy(opt_tensor, idx)
 
-        return sar_tensor, cloudy_tensor, target_tensor
+        return sar_tensor, cloudy_tensor, target_tensor, cloud_mask

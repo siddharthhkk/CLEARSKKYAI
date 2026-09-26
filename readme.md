@@ -11,9 +11,29 @@ The project did not arrive at its current training pipeline in one step. It bega
 
 The goal of this README is to preserve that story rather than simply presenting the final code.
 
-> **Current status:** a fresh 50-epoch training run is in progress using the corrected training pipeline. The historical 25-epoch model remains documented as the previous experiment.
+> **Current status:** the original Sentinel-2 ClearSkyUNet experiment is preserved as a historical baseline. The project is now being migrated to an LISS-IV DSen2-CR-style reconstruction pipeline for the BAH 2026 cloud-removal problem.
+
 
 ---
+# 🛰️ 0. LISS-IV DSen2-CR Migration
+
+The next model family is being adapted for **LISS-IV** rather than Sentinel-2. LISS-IV multispectral imagery provides Green, Red, and NIR bands; the project therefore uses the fixed optical order:
+
+    [G, R, NIR]
+
+The current Phase-1 implementation adds:
+
+- `src/liss4.py` — fixed-range LISS-IV normalization and data checks.
+- `src/liss4_dataset.py` — manifest-driven cloudy/clear pair loading.
+- `src/liss4_dsen2cr.py` — DSen2-CR-style residual model for 3-band LISS-IV, with optional VV/VH SAR fusion.
+- `scripts/inspect_liss4.py` — GeoTIFF inspection before training.
+- `scripts/validate_liss4_setup.py` — software-level sanity checks.
+- `configs/liss4_manifest.csv.example` — dataset manifest template.
+- `docs/LISS4_PIPELINE.md` — phase gates and training plan.
+
+**No LISS-IV training has started yet.** The gate is intentional: we first need a real cloudy/clear LISS-IV pair, verify its band ordering/radiometric scale, and confirm geometric co-registration.
+
+Reference sensor specifications describe LISS-IV as a 3-band VNIR sensor (Green, Red, NIR) with about 5.8 m spatial resolution. ([ISRO Resourcesat-1 Handbook](https://www.nrsc.gov.in/nrscnew/assets/pdf/handbooks/Resourcesat-1_Handbook.pdf), [ISRO Resourcesat-2A](https://www.isro.gov.in/RESOURCESAT_2A.html))
 
 # 📖 1. Where the Idea Started
 
@@ -87,9 +107,18 @@ Our early experiments relied heavily on pixel-wise L1 reconstruction.
 
 That created a practical problem: when clouds covered a large region, simply preserving the visible cloudy structure could sometimes be a safer way to reduce pixel error than reconstructing the hidden terrain.
 
-So the generator objective was expanded to:
+So the original generator objective was:
 
     LG = LGAN + 50 × LL1 + 10 × LVGG
+
+Diagnostics on held-out validation/test tiles showed that cloud-obscured regions had substantially higher RGB error than visible regions. The training objective has therefore been updated to explicitly weight reconstruction inside synthetic cloud masks:
+
+    Lcloud = MAE(prediction[cloud], target[cloud])
+    Lrecon = LL1 + 2 × Lcloud
+
+    LG = LGAN + 50 × Lrecon + 10 × LVGG
+
+This makes cloud pixels receive 3× the base reconstruction weight while keeping the existing GAN and perceptual terms unchanged. The new objective is committed in the training code; a fresh training run is required before reporting new model results.
 
 ### GAN loss
 
@@ -399,15 +428,15 @@ So the experiment is visible instead of looking like a black box.
 
 # 📊 8. Results — Current Run
 
-This section will be updated when the current 50-epoch training run finishes.
+The current 50-epoch retraining run has completed. The supplied completion log shows the final hold-out evaluation at **32.48 dB PSNR** using the best validation-selected generator. The highest validation PSNR visible in the supplied log was **37.13 dB at Epoch 48**.
 
 | Metric | Result |
 |---|---:|
-| Best validation PSNR | ⏳ Pending |
-| Best validation epoch | ⏳ Pending |
-| Final hold-out test PSNR | ⏳ Pending |
-| Final training PSNR | ⏳ Pending |
-| Peak GPU memory | ⏳ Pending |
+| Best validation PSNR observed in completion log | **37.13 dB** (Epoch 48) |
+| Final hold-out test PSNR | **32.48 dB** |
+| Final training PSNR | **34.03 dB** (Epoch 50) |
+| Peak PyTorch allocated GPU memory | **~0.96 GB** |
+| GPU | **NVIDIA Tesla T4 (~14.6 GB usable VRAM)** |
 
 ## Epoch visual record
 
@@ -463,7 +492,7 @@ This shows the visualization after the optical channels were aligned correctly.
 
 This screenshot documents the previous 25-epoch experiment and its historical 31.50 dB peak.
 
-> New epoch images from the current 50-epoch run will be added after the experiment completes.
+> The final completion screenshot is being preserved with the technical report as `temp/training_final.png`.
 
 ---
 
@@ -577,15 +606,59 @@ That is the key idea behind moving from a simple image-to-image reconstruction s
 
 ---
 
+## ☁️ Real-cloud DSen2-CR quick test
+
+To test the pretrained DSen2-CR model on genuine cloudy/cloud-free SEN12MS-CR pairs without downloading the full dataset, use the streaming helper:
+
+    pip install -r requirements.txt
+    python scripts/download_real_cloud_demo.py --samples 5 --seed 42
+
+The helper streams the public `Hermanni/sen12mscr` mirror instead of downloading the full dataset. The mirror contains paired Sentinel-1, cloudy Sentinel-2, and cloud-free Sentinel-2 patches and is released under CC BY 4.0. Hugging Face documents `streaming=True` for accessing large datasets without downloading them locally.
+
+The generated `real_cloud_demo/` directory is ignored by Git. These samples are intended for local inference/debugging, not as a replacement for the official DSen2-CR test protocol.
+
+# 🧠 12.5 Pretrained DSen2-CR Baseline
+
+Because a new full training run is currently unavailable, ClearSky-AI also supports the public DSen2-CR SAR-optical cloud-removal model as an external pretrained baseline.
+
+DSen2-CR was developed specifically for Sentinel-2 cloud removal using Sentinel-1 SAR guidance. The published architecture takes 13 Sentinel-2 bands plus 2 SAR channels and reconstructs all 13 optical bands. The original authors provide a pretrained checkpoint trained with the CARL loss.
+
+In ClearSky-AI, the external Keras HDF5 checkpoint is converted into a PyTorch state dictionary and exposed as a separate model backend in the Streamlit app.
+
+The two models are kept conceptually separate:
+
+    ClearSkyUNet
+        ↓
+    our custom architecture + weights
+
+    DSen2-CR
+        ↓
+    published architecture + published pretrained weights
+
+The DSen2-CR backend is an inference baseline. It does not replace the ClearSkyUNet model or its experimental results.
+
+The Streamlit app now separates the two workflows at the UI level:
+
+    Synthetic Cloud / ClearSkyUNet
+        ↓
+    custom synthetic-corruption experiment
+
+    Real Cloud / DSen2-CR
+        ↓
+    genuine cloudy S2 + SAR inference
+
+For the real-cloud workflow, place samples generated by `scripts/download_real_cloud_diverse.py` in `real_cloud_diverse/`. The app automatically discovers these `.npz` triplets and reports cloudy-input versus DSen2-CR RGB PSNR/MAE. Cloud-only metrics are not shown because the public mirror used for this lightweight demo does not expose the native pixel mask in each row.
+
+
 # 🔬 13. Further Research Directions
 
 Once the current baseline is established, several improvements become possible.
 
 ### Cloud-aware losses
 
-Visible pixels and cloud-obscured pixels should not necessarily contribute equally to the loss.
+This is now implemented in the training pipeline. Each synthetic cloud mask is returned by the dataset and used to add an explicit masked reconstruction term. The default cloud weight is lambda_cloud=2.0.
 
-A future cloud-aware objective could explicitly emphasize the regions that require reconstruction.
+Future work can make this more realistic by deriving masks from real cloudy Sentinel-2 observations instead of synthetic corruption.
 
 ### Spectral consistency
 
@@ -632,6 +705,28 @@ Ignored by Git.
 ### demo_samples/
 
 A smaller tracked subset used for demonstration and lightweight testing.
+
+The demo generator now samples **only from the held-out test ROIs by default**. This means the local demo can use scenes from regions that were excluded from model training and validation-based checkpoint selection.
+
+Generate a fresh 60-pair demo set:
+
+```bash
+python scripts/create_demo_subset.py
+```
+
+Use a different random seed to get a different selection from the same held-out test ROIs:
+
+```bash
+python scripts/create_demo_subset.py --seed 123
+```
+
+Change the number of pairs:
+
+```bash
+python scripts/create_demo_subset.py --pairs 30 --seed 123
+```
+
+Sampling from all ROIs is still possible explicitly with `--all-rois`, but the default is the held-out test set.
 
 ### weights/
 
