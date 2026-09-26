@@ -131,12 +131,18 @@ Therefore Phase 4 uses a two-stage data strategy:
 
 The Chennai cloudy sample is reserved for qualitative out-of-scene inference. It must not be assigned a PSNR/SSIM score without a verified clear target.
 
-Generate the synthetic pretraining set with:
+Generate the synthetic pretraining set with the two native clear scenes if you are using it only as a pipeline smoke test:
 
     python scripts/make_liss4_synthetic_pretrain.py \
       data/raw/clear/guwahati_clear.tif \
       data/raw/clear/spatialthoughts_liss4_clear.tif \
       --samples-per-scene 256
+
+**Leakage rule:** do not use the Guwahati clear scene for synthetic pretraining if Guwahati will later be used as the real-cloud evaluation scene. The current 512-sample set is therefore a successful data-generation smoke test, but it is **not yet the production pretraining split**. For the first leakage-safe run, regenerate synthetic pretraining from the Spatial Thoughts scene only.
+
+Validate the generated set with:
+
+    python scripts/validate_liss4_synthetic_pretrain.py
 
 Then validate native sources:
 
