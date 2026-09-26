@@ -188,8 +188,11 @@ def main():
                 device_type="cuda",
                 enabled=device.type == "cuda",
             ):
+                # Do not clamp during training. Because the model has a
+                # cloudy-image long skip, cloud pixels start near 1.0.
+                # Clamping there can create zero gradient and prevent
+                # the residual branch from learning to remove clouds.
                 pred = model(cloudy)
-                pred = torch.clamp(pred, 0.0, 1.0)
 
                 base = loss_l1(pred, clear)
                 cloud = masked_l1(pred, clear, mask)
