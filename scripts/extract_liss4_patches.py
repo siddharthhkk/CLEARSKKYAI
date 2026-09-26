@@ -86,14 +86,19 @@ def main():
                 name = f"patch_{saved:06d}.npz"
                 path = os.path.join(out_dir, name)
 
+                cx, cy = c.transform * (
+                    col + args.patch_size / 2.0,
+                    row + args.patch_size / 2.0,
+                )
+
                 np.savez_compressed(
                     path,
                     cloudy=cloudy,
                     clear=clear,
                     row=np.int32(row),
                     col=np.int32(col),
-                    x=np.float64(c.transform * (col + args.patch_size / 2.0, row + args.patch_size / 2.0)[0]),
-                    y=np.float64(c.transform * (col + args.patch_size / 2.0, row + args.patch_size / 2.0)[1]),
+                    x=np.float64(cx),
+                    y=np.float64(cy),
                 )
 
                 records.append(
