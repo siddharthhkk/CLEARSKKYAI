@@ -1,1 +1,2 @@
 weights/liss4_dsen2cr_synthetic.pth filter=lfs diff=lfs merge=lfs -text
+weights/liss4_dsen2cr_synthetic_v2.pth filter=lfs diff=lfs merge=lfs -text
