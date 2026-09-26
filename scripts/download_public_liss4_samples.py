@@ -1,6 +1,7 @@
 import argparse
 import os
 import shutil
+import tempfile
 import urllib.request
 import zipfile
 
@@ -16,21 +17,20 @@ SPATIAL_URL = (
 
 
 def download_spatialthoughts(out_dir):
-    raw = os.path.join(out_dir, "spatialthoughts_demo_raw")
-    os.makedirs(raw, exist_ok=True)
-    zip_path = os.path.join(raw, "liss4_demo.zip")
-
     print("\n[1/2] Spatial Thoughts native LISS-IV clear scene")
     print(f"URL: {SPATIAL_URL}")
-    urllib.request.urlretrieve(SPATIAL_URL, zip_path)
 
-    extract_dir = os.path.join(raw, "extract")
-    os.makedirs(extract_dir, exist_ok=True)
-    with zipfile.ZipFile(zip_path) as zf:
-        zf.extractall(extract_dir)
+    with tempfile.TemporaryDirectory(prefix="liss4_download_") as raw:
+        zip_path = os.path.join(raw, "liss4_demo.zip")
+        urllib.request.urlretrieve(SPATIAL_URL, zip_path)
 
-    band_files = {}
-    for root, _, names in os.walk(extract_dir):
+        extract_dir = os.path.join(raw, "extract")
+        os.makedirs(extract_dir, exist_ok=True)
+        with zipfile.ZipFile(zip_path) as zf:
+            zf.extractall(extract_dir)
+
+        band_files = {}
+        for root, _, names in os.walk(extract_dir):
         for name in names:
             low = name.lower()
             if low in {"band2.tif", "band3.tif", "band4.tif"}:
