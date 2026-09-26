@@ -1,0 +1,4 @@
+cloudy,clear,aoi,split,mask,sar_vv,sar_vh
+data/raw/cloudy/example_cloudy.tif,data/raw/clear/example_clear.tif,example_aoi,train,,,
+data/raw/cloudy/example_val_cloudy.tif,data/raw/clear/example_val_clear.tif,example_val_aoi,val,,,
+data/raw/cloudy/example_test_cloudy.tif,data/raw/clear/example_test_clear.tif,example_test_aoi,test,,,
