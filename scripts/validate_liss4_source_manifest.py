@@ -6,23 +6,22 @@ import rasterio
 
 def main():
     ap = argparse.ArgumentParser(
-        description="Validate a directory of native LISS-IV GeoTIFF sources."
+        description="Validate top-level native LISS-IV GeoTIFF sources."
     )
     ap.add_argument("directory")
     args = ap.parse_args()
 
     root = os.path.abspath(args.directory)
     files = sorted(
-        os.path.join(dirpath, name)
-        for dirpath, _, names in os.walk(root)
-        for name in names
-        if name.lower().endswith((".tif", ".tiff"))
+        os.path.join(root, f)
+        for f in os.listdir(root)
+        if f.lower().endswith((".tif", ".tiff"))
     )
 
     if not files:
-        raise SystemExit("FAIL: no GeoTIFF files found")
+        raise SystemExit("FAIL: no top-level GeoTIFF source files found")
 
-    print(f"Found {len(files)} GeoTIFF(s)")
+    print(f"Found {len(files)} top-level GeoTIFF(s)")
 
     for path in files:
         with rasterio.open(path) as src:
@@ -33,9 +32,11 @@ def main():
                 f"crs={src.crs} | res={src.res}"
             )
             if src.count != 3:
-                raise SystemExit(f"FAIL: expected 3 bands: {path}")
+                raise SystemExit(
+                    f"FAIL: expected one stacked 3-band LISS-IV GeoTIFF: {path}"
+                )
 
-    print("PASS: every source is a 3-band GeoTIFF.")
+    print("PASS: every top-level source is a 3-band LISS-IV GeoTIFF.")
 
 
 if __name__ == "__main__":
