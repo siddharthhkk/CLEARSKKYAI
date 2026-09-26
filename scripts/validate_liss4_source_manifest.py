@@ -13,9 +13,10 @@ def main():
 
     root = os.path.abspath(args.directory)
     files = sorted(
-        os.path.join(root, f)
-        for f in os.listdir(root)
-        if f.lower().endswith((".tif", ".tiff"))
+        os.path.join(dirpath, name)
+        for dirpath, _, names in os.walk(root)
+        for name in names
+        if name.lower().endswith((".tif", ".tiff"))
     )
 
     if not files:
