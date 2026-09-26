@@ -25,6 +25,9 @@ class SyntheticLISS4Dataset(Dataset):
         self.dn_max = float(dn_max)
 
         for scene in scene_paths:
+            scene = os.path.abspath(scene)
+            if not os.path.isfile(scene):
+                raise FileNotFoundError(scene)
             with rasterio.open(scene) as src:
                 arr = src.read().astype(np.float32)
                 if arr.shape[0] != 3:
@@ -39,10 +42,22 @@ class SyntheticLISS4Dataset(Dataset):
         for scene, arr in self.items:
             h, w = arr.shape[1:]
             for _ in range(samples_per_scene):
-                row = int(rng.integers(0, h - 255))
-                col = int(rng.integers(0, w - 255))
-                cloud_seed = int(rng.integers(0, 2**31 - 1))
-                self.samples.append((scene, row, col, cloud_seed))
+                accepted = False
+                for _ in range(1000):
+                    row = int(rng.integers(0, h - 255))
+                    col = int(rng.integers(0, w - 255))
+                    patch = arr[:, row:row + 256, col:col + 256]
+                    zero_frac = float(np.mean(patch == 0))
+                    if zero_frac <= 0.30:
+                        cloud_seed = int(rng.integers(0, 2**31 - 1))
+                        self.samples.append((scene, row, col, cloud_seed))
+                        accepted = True
+                        break
+                if not accepted:
+                    raise RuntimeError(
+                        f"Could not find a sufficiently valid 256x256 patch in {scene}. "
+                        "The scene may be mostly nodata/empty."
+                    )
 
         self.rng_seed = seed
 
