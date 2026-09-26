@@ -81,6 +81,16 @@ This verifies normalization, both optical-only and SAR-fusion tensor paths, and 
 
 Training is intentionally not started by Phase 1. We first need at least one real LISS-IV cloudy/clear pair and a verified manifest.
 
+## Public sample for Gate 1
+
+A public 6.31 MiB LISS-IV GeoTIFF sample is available from the `kk947/LISS-IV-Cloud-Removal` Hugging Face Space. The repository includes `scripts/download_liss4_public_sample.py` to fetch it into `data/raw/cloudy/`.
+
+Run:
+
+    python scripts/download_liss4_public_sample.py
+
+This sample is suitable for **format/radiometry/inference smoke tests only**. It is not a verified cloudy/clear ground-truth pair, so it must not be used to report supervised reconstruction metrics.
+
 ## Current limitation
 
-No real LISS-IV GeoTIFF is bundled in this repository. The validation script uses synthetic 8x8 data only for software checks. This is deliberate: third-party satellite data should not be committed until its redistribution terms and exact product format are verified.
+No real LISS-IV cloudy/clear training pair is bundled in this repository. The validation script uses synthetic 8x8 data only for software checks. This is deliberate: third-party satellite data should not be committed until its redistribution terms and exact product format are verified.
