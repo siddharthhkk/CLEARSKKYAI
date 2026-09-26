@@ -1,7 +1,6 @@
 import argparse
 import csv
 import os
-import rasterio
 
 
 def main():
@@ -12,10 +11,23 @@ def main():
     ap.add_argument("--train-output", default=None)
     ap.add_argument("--val-output", default=None)
     ap.add_argument("--val-fraction", type=float, default=0.20)
+    ap.add_argument(
+        "--scene-width",
+        type=int,
+        default=None,
+        help=(
+            "Source scene width in pixels. Use this when the original source TIFF "
+            "is not available locally. For the Spatial Thoughts LISS-IV scene used "
+            "for this project, the width is 17733 pixels."
+        ),
+    )
     args = ap.parse_args()
 
     if not 0.05 <= args.val_fraction <= 0.40:
         raise ValueError("--val-fraction must be between 0.05 and 0.40")
+
+    if args.scene_width is not None and args.scene_width < 256:
+        raise ValueError("--scene-width must be at least 256 pixels")
 
     manifest = os.path.abspath(args.manifest)
     root = os.path.dirname(manifest)
@@ -29,17 +41,26 @@ def main():
     train = []
     val = []
 
-    # Split each source scene into a left training region and a right
-    # validation stripe. A 256-pixel patch must fit completely inside
-    # its assigned region, so train/val patches cannot overlap across
-    # the boundary.
     scenes = {}
     for r in rows:
         scenes.setdefault(os.path.abspath(r["scene"]), []).append(r)
 
     for scene, rs in scenes.items():
-        with rasterio.open(scene) as src:
-            cut = int(src.width * (1.0 - args.val_fraction))
+        if args.scene_width is not None:
+            width = args.scene_width
+        else:
+            try:
+                import rasterio
+
+                with rasterio.open(scene) as src:
+                    width = src.width
+            except Exception as exc:
+                raise SystemExit(
+                    "FAIL: source scene TIFF is unavailable. "
+                    "Provide --scene-width (for this project, 17733)."
+                ) from exc
+
+        cut = int(width * (1.0 - args.val_fraction))
 
         for r in rs:
             col = int(r["col"])
@@ -73,6 +94,7 @@ def main():
     print(f"Train samples: {len(train)}")
     print(f"Val samples  : {len(val)}")
     print(f"Val fraction : {args.val_fraction:.2f}")
+    print(f"Scene width  : {width}")
     print(f"Train manifest: {train_path}")
     print(f"Val manifest  : {val_path}")
     print("PASS: train/val patches are separated by a spatial scene boundary.")
