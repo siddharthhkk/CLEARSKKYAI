@@ -29,7 +29,7 @@ def main():
         description="Evaluate a synthetic-pretrained LISS-IV checkpoint on the held-out real Guwahati pair."
     )
     ap.add_argument("--checkpoint", default="weights/liss4_dsen2cr_synthetic.pth")
-    ap.add_argument("--cloudy", default="data/raw/cloudy/guwahati_cloudy.tif")
+    ap.add_argument("--cloudy", default="data/raw/cloudy/guwahati_cloudy_test.tif")
     ap.add_argument("--clear", default="data/raw/clear/guwahati_clear.tif")
     ap.add_argument("--output", default="data/eval/guwahati_liss4_dsen2cr.tif")
     ap.add_argument("--dn-max", type=float, default=1023.0)
