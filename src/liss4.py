@@ -29,9 +29,10 @@ def normalize_liss4(arr, dn_max=1023.0):
     """
     a = np.asarray(arr, dtype=np.float32)
 
-    if a.ndim != 3 or a.shape[0] != 3:
+    if a.ndim not in (3, 4) or a.shape[-3] != 3:
         raise ValueError(
-            f"LISS-IV input must have shape [3,H,W] = [G,R,NIR], got {a.shape}"
+            f"LISS-IV input must have shape [3,H,W] or [B,3,H,W] "
+            f"= [G,R,NIR], got {a.shape}"
         )
     if dn_max <= 0:
         raise ValueError(f"dn_max must be positive, got {dn_max}")
