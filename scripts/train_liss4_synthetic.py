@@ -3,8 +3,6 @@ import csv
 import os
 import sys
 import time
-from collections import defaultdict
-
 import numpy as np
 import torch
 import torch.nn as nn
@@ -74,6 +72,8 @@ def main():
     ap.add_argument("--blocks", type=int, default=16)
     ap.add_argument("--lambda-cloud", type=float, default=2.0)
     ap.add_argument("--output", default="weights/liss4_dsen2cr_synthetic.pth")
+    ap.add_argument("--latest-output", default=None)
+    ap.add_argument("--resume", default=None)
     args = ap.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -142,9 +142,33 @@ def main():
     )
 
     best = -float("inf")
-    os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
+    start_epoch = 1
 
-    for epoch in range(1, args.epochs + 1):
+    os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
+    latest_output = args.latest_output
+    if latest_output is None:
+        base, ext = os.path.splitext(args.output)
+        latest_output = base + "_latest" + ext
+
+    if args.resume:
+        ckpt = torch.load(args.resume, map_location=device, weights_only=False)
+        model.load_state_dict(ckpt["model_state_dict"])
+        if "optimizer_state_dict" in ckpt:
+            optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+        if "scaler_state_dict" in ckpt:
+            scaler.load_state_dict(ckpt["scaler_state_dict"])
+        best = float(ckpt.get("best_val_psnr", best))
+        start_epoch = int(ckpt.get("epoch", 0)) + 1
+        print(f"Resuming from epoch {start_epoch}")
+
+    if args.train_manifest:
+        train_source = os.path.abspath(args.train_manifest)
+        val_source = os.path.abspath(args.val_manifest)
+    else:
+        train_source = [os.path.abspath(p) for p in (args.train_scene or [])]
+        val_source = [os.path.abspath(p) for p in (args.val_scene or [])]
+
+    for epoch in range(start_epoch, args.epochs + 1):
         model.train()
         optimizer.zero_grad(set_to_none=True)
         total = 0.0
@@ -224,15 +248,33 @@ def main():
                     "blocks": args.blocks,
                     "dn_max": 1023.0,
                     "best_val_psnr": best,
-                    "train_scene": sorted(train_scenes),
-                    "val_scene": sorted(val_scenes),
+                    "train_source": train_source,
+                    "val_source": val_source,
+                    "epoch": epoch,
                 },
                 args.output,
             )
 
+        torch.save(
+            {
+                "epoch": epoch,
+                "model_state_dict": model.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+                "scaler_state_dict": scaler.state_dict(),
+                "features": args.features,
+                "blocks": args.blocks,
+                "dn_max": 1023.0,
+                "best_val_psnr": best,
+                "train_source": train_source,
+                "val_source": val_source,
+            },
+            latest_output,
+        )
+
     print()
     print(f"Best validation PSNR: {best:.3f} dB")
-    print(f"Checkpoint          : {os.path.abspath(args.output)}")
+    print(f"Best checkpoint     : {os.path.abspath(args.output)}")
+    print(f"Latest checkpoint   : {os.path.abspath(latest_output)}")
     print(
         "This is synthetic-cloud pretraining. It is not the final real-cloud benchmark."
     )
