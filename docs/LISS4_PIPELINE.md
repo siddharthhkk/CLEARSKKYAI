@@ -79,7 +79,17 @@ This verifies normalization, both optical-only and SAR-fusion tensor paths, and 
 
 ### Gate 4 — training
 
-Training is intentionally not started by Phase 1. We first need at least one real LISS-IV cloudy/clear pair and a verified manifest.
+Training is intentionally staged. The first training experiment is a tiny overfit test on the single Guwahati development scene. It verifies that the model can learn the real cloudy-to-clear mapping without claiming scene-level generalization.
+
+Run:
+
+    python scripts/overfit_liss4.py
+
+Then evaluate the saved checkpoint:
+
+    python scripts/evaluate_liss4_overfit.py
+
+The input cloudy image currently measures **27.941 dB PSNR** against the historical clear reference at DN max 1023. The overfit test is expected to reduce MAE and increase PSNR on these same development patches; it is not a benchmark.
 
 ## Public sample for Gate 1
 
@@ -97,4 +107,4 @@ This sample is suitable for **format/radiometry/inference smoke tests only**. It
 
 ## Current limitation
 
-No real LISS-IV cloudy/clear training pair is bundled in this repository. The validation script uses synthetic 8x8 data only for software checks. This is deliberate: third-party satellite data should not be committed until its redistribution terms and exact product format are verified.
+Only one real cloudy/clear LISS-IV scene pair is currently available locally. It is sufficient for pipeline and overfit smoke tests, but not for a credible train/validation/test experiment. We need more geographically distinct paired scenes before full training and reporting. The validation script uses synthetic 8x8 data only for software checks. This is deliberate: third-party satellite data should not be committed until its redistribution terms and exact product format are verified.
