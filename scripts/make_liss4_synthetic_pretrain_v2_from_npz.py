@@ -22,10 +22,8 @@ class V2FromNPZDataset(Dataset):
         if not self.rows:
             raise ValueError("Manifest is empty.")
 
-        required = {"idx"}
-        missing = required - set(self.rows[0].keys())
-        if missing:
-            raise ValueError(f"Manifest missing columns: {sorted(missing)}")
+        if "idx" not in self.rows[0]:
+            raise ValueError("Manifest missing required column: idx")
 
     def __len__(self):
         return len(self.rows)
@@ -63,15 +61,20 @@ class V2FromNPZDataset(Dataset):
         field /= max(float(field.max()), 1e-6)
 
         thr = float(g.uniform(0.58, 0.72))
-        support = (field > thr).astype(np.float32)
+        binary = (field > thr).astype(np.float32)
 
-        st = torch.from_numpy(support)[None, None]
-        st = F.avg_pool2d(st, kernel_size=9, stride=1, padding=4)
-        support = st[0, 0].numpy()
+        support = torch.from_numpy(binary)[None, None]
+        support = F.avg_pool2d(
+            support,
+            kernel_size=9,
+            stride=1,
+            padding=4,
+        )[0, 0].numpy()
 
         fine = cls._field(g, 7, size)
-        alpha = 0.18 + 0.72 * support
-        alpha *= 0.72 + 0.28 * fine
+
+        # IMPORTANT: opacity is zero outside actual cloud support.
+        alpha = support * (0.18 + 0.72 * (0.72 + 0.28 * fine))
         alpha = np.clip(alpha, 0.0, 0.95).astype(np.float32)
 
         mask = (alpha > 0.12).astype(np.float32)
@@ -96,8 +99,12 @@ class V2FromNPZDataset(Dataset):
             shadow[ys:ye, xs:xe] = alpha[sy:ey, sx:ex]
 
         shadow = torch.from_numpy(shadow)[None, None]
-        shadow = F.avg_pool2d(shadow, kernel_size=15, stride=1, padding=7)
-        shadow = shadow[0, 0].numpy()
+        shadow = F.avg_pool2d(
+            shadow,
+            kernel_size=15,
+            stride=1,
+            padding=7,
+        )[0, 0].numpy()
         shadow *= float(g.uniform(0.25, 0.55))
         shadow = np.clip(shadow, 0.0, 0.65).astype(np.float32)
 
@@ -105,23 +112,31 @@ class V2FromNPZDataset(Dataset):
 
     def __getitem__(self, idx):
         row = self.rows[idx]
-        p = os.path.join(self.root, f"sample_{int(row['idx']):06d}.npz")
+        p = os.path.join(
+            self.root,
+            f"sample_{int(row['idx']):06d}.npz",
+        )
 
         with np.load(p) as d:
             if "clear" not in d:
                 raise ValueError(f"{p} does not contain a clear target.")
+
             clear = d["clear"].astype(np.float32)
-            old_seed = int(d["row"]) * 1000003 + int(d["col"])
+
+            old_row = int(d["row"]) if "row" in d else int(row.get("row", 0))
+            old_col = int(d["col"]) if "col" in d else int(row.get("col", 0))
+            old_seed = old_row * 1000003 + old_col
+
             if "scene" in d:
                 scene = str(d["scene"])
             else:
                 scene = row.get("scene", "")
 
         if clear.shape != (3, 256, 256):
-            raise ValueError(f"Expected clear shape (3,256,256) in {p}, got {clear.shape}")
+            raise ValueError(
+                f"Expected clear shape (3,256,256) in {p}, got {clear.shape}"
+            )
 
-        # Derive a deterministic new seed from the original patch identity.
-        # This keeps V2 reproducible without requiring the missing source TIFF.
         base_seed = int(row.get("cloud_seed", 0))
         seed = (base_seed ^ old_seed) & 0x7FFFFFFF
 
@@ -146,18 +161,22 @@ class V2FromNPZDataset(Dataset):
             dtype=np.float32,
         )
 
-        cloud = cloud_base[:, None, None] * spectral[:, None, None]
-        cloud = np.clip(cloud, 0.0, 1.0)
+        cloud = np.clip(
+            cloud_base[:, None, None] * spectral[:, None, None],
+            0.0,
+            1.0,
+        )
 
         clear_n = np.clip(clear / self.dn_max, 0.0, 1.0)
 
-        cloudy_n = (
-            clear_n * (1.0 - alpha[None])
-            + cloud * alpha[None]
-        )
-        cloudy_n *= (1.0 - shadow[None])
+        cloudy_n = clear_n * (1.0 - alpha[None]) + cloud * alpha[None]
+        cloudy_n *= 1.0 - shadow[None]
 
-        noise = g.normal(0.0, 0.004, size=cloudy_n.shape).astype(np.float32)
+        noise = g.normal(
+            0.0,
+            0.004,
+            size=cloudy_n.shape,
+        ).astype(np.float32)
         cloudy_n += noise * (0.35 + 0.65 * alpha[None])
         cloudy_n = np.clip(cloudy_n, 0.0, 1.0)
 
@@ -170,8 +189,8 @@ class V2FromNPZDataset(Dataset):
             "alpha": alpha[None].astype(np.float32),
             "shadow": shadow[None].astype(np.float32),
             "scene": scene,
-            "row": np.int32(row.get("row", -1)),
-            "col": np.int32(row.get("col", -1)),
+            "row": np.int32(old_row),
+            "col": np.int32(old_col),
             "cloud_seed": np.int64(seed),
         }
 
@@ -180,7 +199,7 @@ def main():
     ap = argparse.ArgumentParser(
         description=(
             "Generate Synthetic Clouds V2 from existing native LISS-IV NPZ "
-            "patches, so the original clear TIFF is not required."
+            "patches. The original clear TIFF is not required."
         )
     )
     ap.add_argument(
@@ -241,6 +260,7 @@ def main():
     print("Uses the existing clear LISS-IV patches already present in the dataset.")
     print("The original native clear TIFF is not required.")
     print("V2 includes variable-opacity clouds, spectral cloud radiance, shadows, and noise.")
+    print("Cloud opacity is zero outside cloud support.")
     print("This remains synthetic pretraining data, not a real-cloud benchmark.")
 
 
