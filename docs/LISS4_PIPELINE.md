@@ -105,6 +105,45 @@ To fetch the public historical clear-reference database exposed by the same Spac
 
 This sample is suitable for **format/radiometry/inference smoke tests only**. It is not a verified cloudy/clear ground-truth pair, so it must not be used to report supervised reconstruction metrics.
 
+## Phase 4 — data expansion under native-LISS-IV scarcity
+
+Public native LISS-IV paired cloudy/clear datasets are scarce. The current public BAH-oriented Space provides the Guwahati cloudy sample and a historical clear reference, while an earlier commit also contained a Chennai cloudy sample. The project history confirms that matching historical references are expected to come from the same geographic area. ([BAH-oriented public Space](https://huggingface.co/spaces/kk947/LISS-IV-Cloud-Removal/tree/main), [initial commit](https://huggingface.co/spaces/kk947/LISS-IV-Cloud-Removal/commit/6acd86abe2bc95ca0faa3013f4da0dc4c0d60929))
+
+A separate public Spatial Thoughts tutorial provides a native LISS-IV Resourcesat-2/2A demonstration scene as a downloadable ZIP. The tutorial documents the three LISS-IV bands and the sensor's 10-bit DN representation. ([Spatial Thoughts LISS4 tutorial](https://spatialthoughts.com/2023/12/25/liss4-processing-xarray/))
+
+Run:
+
+    python scripts/download_public_liss4_samples.py
+
+This adds:
+- one additional native LISS-IV clear scene from the Spatial Thoughts public demonstration;
+- the historical public Chennai cloudy sample from the earlier BAH-oriented Space revision.
+
+These are **not** treated as another supervised cloudy/clear pair because no verified same-AOI clear Chennai target was found.
+
+Therefore Phase 4 uses a two-stage data strategy:
+
+    native LISS-IV clear scenes
+             ↓
+    synthetic cloud pretraining
+             ↓
+    real Guwahati cloudy/clear fine-tuning
+
+The Chennai cloudy sample is reserved for qualitative out-of-scene inference. It must not be assigned a PSNR/SSIM score without a verified clear target.
+
+Generate the synthetic pretraining set with:
+
+    python scripts/make_liss4_synthetic_pretrain.py \
+      data/raw/clear/guwahati_clear.tif \
+      data/raw/clear/spatialthoughts_liss4_clear.tif \
+      --samples-per-scene 256
+
+Then validate native sources:
+
+    python scripts/validate_liss4_source_manifest.py data/raw/clear
+
+This is a **fallback training strategy caused by native paired-data scarcity**, not a replacement for a proper multi-AOI real-cloud benchmark.
+
 ## Current limitation
 
-Only one real cloudy/clear LISS-IV scene pair is currently available locally. It is sufficient for pipeline and overfit smoke tests, but not for a credible train/validation/test experiment. We need more geographically distinct paired scenes before full training and reporting. The validation script uses synthetic 8x8 data only for software checks. This is deliberate: third-party satellite data should not be committed until its redistribution terms and exact product format are verified.
+Only one native cloudy/clear LISS-IV pair is currently verified for supervised metrics. Full train/validation/test reporting remains blocked until additional same-AOI historical pairs are obtained. The validation script uses synthetic 8x8 data only for software checks. This is deliberate: third-party satellite data should not be committed until its redistribution terms and exact product format are verified.
