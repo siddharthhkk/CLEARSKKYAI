@@ -7,7 +7,6 @@ import zipfile
 
 from huggingface_hub import hf_hub_download
 
-
 HF_REPO = "kk947/LISS-IV-Cloud-Removal"
 HF_REVISION = "6acd86abe2bc95ca0faa3013f4da0dc4c0d60929"
 SPATIAL_URL = (
@@ -25,34 +24,34 @@ def download_spatialthoughts(out_dir):
         urllib.request.urlretrieve(SPATIAL_URL, zip_path)
 
         extract_dir = os.path.join(raw, "extract")
-        os.makedirs(extract_dir, exist_ok=True)
         with zipfile.ZipFile(zip_path) as zf:
             zf.extractall(extract_dir)
 
         band_files = {}
         for root, _, names in os.walk(extract_dir):
-        for name in names:
-            low = name.lower()
-            if low in {"band2.tif", "band3.tif", "band4.tif"}:
-                band_files[low] = os.path.join(root, name)
+            for name in names:
+                if name.lower() in {"band2.tif", "band3.tif", "band4.tif"}:
+                    band_files[name.lower()] = os.path.join(root, name)
 
-    if set(band_files) != {"band2.tif", "band3.tif", "band4.tif"}:
-        raise RuntimeError(
-            "Spatial Thoughts sample did not contain BAND2.tif, BAND3.tif and BAND4.tif."
-        )
+        if set(band_files) != {"band2.tif", "band3.tif", "band4.tif"}:
+            raise RuntimeError(
+                "Spatial Thoughts sample did not contain BAND2.tif, BAND3.tif and BAND4.tif."
+            )
 
-    import numpy as np
-    import rasterio
+        import numpy as np
+        import rasterio
 
-    with rasterio.open(band_files["band2.tif"]) as s:
-        profile = s.profile.copy()
-        profile.update(count=3, dtype="uint16", compress="deflate")
-        b2 = s.read(1)
-    with rasterio.open(band_files["band3.tif"]) as s:
-        b3 = s.read(1)
-    with rasterio.open(band_files["band4.tif"]) as s:
-        b4 = s.read(1)
+        with rasterio.open(band_files["band2.tif"]) as s:
+            profile = s.profile.copy()
+            b2 = s.read(1)
 
+        with rasterio.open(band_files["band3.tif"]) as s:
+            b3 = s.read(1)
+
+        with rasterio.open(band_files["band4.tif"]) as s:
+            b4 = s.read(1)
+
+    profile.update(count=3, dtype="uint16", compress="deflate")
     out = os.path.join(out_dir, "spatialthoughts_liss4_clear.tif")
     stacked = np.stack([b2, b3, b4], axis=0)
 
@@ -66,6 +65,7 @@ def download_spatialthoughts(out_dir):
 def download_chennai(out_dir):
     print("\n[2/2] Historical public Chennai LISS-IV cloudy sample")
     print(f"Source: {HF_REPO}@{HF_REVISION}")
+
     path = hf_hub_download(
         repo_id=HF_REPO,
         repo_type="space",
@@ -80,8 +80,7 @@ def download_chennai(out_dir):
 
     print(f"PASS: saved {final}")
     print(
-        "NOTE: this Chennai file has no verified paired clear target in the "
-        "public source. Use it for qualitative/out-of-scene tests only."
+        "NOTE: no verified clear Chennai target is included; use it only for qualitative tests."
     )
     return final
 
@@ -94,14 +93,15 @@ def main():
     ap.add_argument("--cloudy-dir", default="data/raw/cloudy")
     args = ap.parse_args()
 
-    os.makedirs(args.clear_dir, exist_ok=True)
-    os.makedirs(args.cloudy_dir, exist_ok=True)
+    clear_dir = os.path.abspath(args.clear_dir)
+    cloudy_dir = os.path.abspath(args.cloudy_dir)
+    os.makedirs(clear_dir, exist_ok=True)
+    os.makedirs(cloudy_dir, exist_ok=True)
 
-    download_spatialthoughts(os.path.abspath(args.clear_dir))
-    download_chennai(os.path.abspath(args.cloudy_dir))
+    download_spatialthoughts(clear_dir)
+    download_chennai(cloudy_dir)
 
     print("\nPUBLIC LISS-IV SAMPLE DOWNLOAD COMPLETE")
-    print("The new samples are not treated as additional supervised cloudy/clear pairs.")
 
 
 if __name__ == "__main__":
