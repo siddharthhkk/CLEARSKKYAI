@@ -33,7 +33,7 @@ The current Phase-1 implementation adds:
 
 **No LISS-IV training has started yet.** The gate is intentional: we first need a real cloudy/clear LISS-IV pair, verify its band ordering/radiometric scale, and confirm geometric co-registration.
 
-Reference sensor specifications describe LISS-IV as a 3-band VNIR sensor (Green, Red, NIR) with about 5.8 m spatial resolution. citeturn317584search22turn317584search2
+Reference sensor specifications describe LISS-IV as a 3-band VNIR sensor (Green, Red, NIR) with about 5.8 m spatial resolution. ([ISRO Resourcesat-1 Handbook](https://www.nrsc.gov.in/nrscnew/assets/pdf/handbooks/Resourcesat-1_Handbook.pdf), [ISRO Resourcesat-2A](https://www.isro.gov.in/RESOURCESAT_2A.html))
 
 # 📖 1. Where the Idea Started
 
