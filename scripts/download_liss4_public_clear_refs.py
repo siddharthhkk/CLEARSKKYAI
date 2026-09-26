@@ -26,7 +26,7 @@ def main():
     print("Filter : data/raw/clear/*.tif")
     print(f"Output : {out}")
 
-    cache_dir = snapshot_download(
+    snapshot_download(
         repo_id=REPO_ID,
         repo_type="space",
         allow_patterns=[
@@ -34,29 +34,54 @@ def main():
             "data/raw/clear/*.TIF",
         ],
         local_dir=out,
-        local_dir_use_symlinks=False,
     )
 
-    files = []
-    for root, _, names in os.walk(out):
-        for name in names:
-            if name.lower().endswith((".tif", ".tiff")):
-                files.append(os.path.join(root, name))
+    # snapshot_download preserves repository-relative directories. Flatten
+    # only the clear-reference files into the project's intended output dir.
+    nested_dirs = [
+        os.path.join(out, "data", "raw", "clear"),
+        os.path.join(out, "data", "raw_samples"),
+    ]
 
-    files.sort()
+    moved = []
+    for nested in nested_dirs:
+        if not os.path.isdir(nested):
+            continue
+        for name in os.listdir(nested):
+            if not name.lower().endswith((".tif", ".tiff")):
+                continue
+            src = os.path.join(nested, name)
+            dst = os.path.join(out, name)
+            if os.path.abspath(src) == os.path.abspath(dst):
+                continue
+            if os.path.exists(dst):
+                os.remove(src)
+            else:
+                shutil.move(src, dst)
+            moved.append(dst)
+
+    files = sorted(
+        os.path.join(out, name)
+        for name in os.listdir(out)
+        if name.lower().endswith((".tif", ".tiff"))
+    )
 
     if not files:
         raise RuntimeError(
-            "The public Space did not expose any clear-reference GeoTIFFs "
-            "through its snapshot. Check the Space files or download them manually."
+            "The public Space did not expose any clear-reference GeoTIFFs."
         )
 
     print(f"PASS downloaded {len(files)} clear-reference GeoTIFF(s).")
-    print(f"Snapshot : {cache_dir}")
     for p in files[:20]:
         print(" -", os.path.relpath(p, out))
-    if len(files) > 20:
-        print(f" ... and {len(files) - 20} more")
+
+    # Clean empty nested directories created by the repository layout.
+    for nested in nested_dirs:
+        if os.path.isdir(nested):
+            try:
+                os.rmdir(nested)
+            except OSError:
+                pass
 
 
 if __name__ == "__main__":
