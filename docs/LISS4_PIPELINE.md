@@ -89,6 +89,10 @@ Run:
 
     python scripts/download_liss4_public_sample.py
 
+To fetch the public historical clear-reference database exposed by the same Space, run:
+
+    python scripts/download_liss4_public_clear_refs.py
+
 This sample is suitable for **format/radiometry/inference smoke tests only**. It is not a verified cloudy/clear ground-truth pair, so it must not be used to report supervised reconstruction metrics.
 
 ## Current limitation
