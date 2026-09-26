@@ -9,7 +9,7 @@ from torch.utils.data import Dataset
 
 
 class V2FromNPZDataset(Dataset):
-    """Generate deterministic Synthetic Clouds V2 over native clear LISS-IV scenes."""
+    """Apply Synthetic Clouds V2 to existing clear LISS-IV NPZ patches."""
 
     def __init__(self, manifest, dn_max=1023.0):
         self.manifest = os.path.abspath(manifest)
@@ -38,7 +38,10 @@ class V2FromNPZDataset(Dataset):
             x = F.avg_pool2d(x, kernel_size=3, stride=1, padding=1)
 
         x = F.interpolate(
-            x, size=(size, size), mode="bilinear", align_corners=False
+            x,
+            size=(size, size),
+            mode="bilinear",
+            align_corners=False,
         )[0, 0].numpy()
 
         x -= x.min()
@@ -48,69 +51,43 @@ class V2FromNPZDataset(Dataset):
     @classmethod
     def _cloud_maps(cls, seed, size=256):
         g = np.random.default_rng(seed)
-        yy, xx = np.mgrid[0:size, 0:size].astype(np.float32)
 
-        # Build several compact cloud masses instead of one giant low-frequency blob.
-        n_blobs = int(g.integers(2, 6))
-        field = np.zeros((size, size), dtype=np.float32)
+        f0 = cls._field(g, 64, size)
+        f1 = cls._field(g, 28, size)
+        f2 = cls._field(g, 10, size)
 
-        for _ in range(n_blobs):
-            cx = float(g.uniform(0.12, 0.88) * size)
-            cy = float(g.uniform(0.12, 0.88) * size)
-            rx = float(g.uniform(24, 58))
-            ry = float(g.uniform(18, 52))
-            ang = float(g.uniform(0.0, 2.0 * np.pi))
+        shape = 0.55 * f0 + 0.32 * f1 + 0.13 * f2
+        shape -= shape.min()
+        shape /= max(float(shape.max()), 1e-6)
 
-            ca = np.cos(ang)
-            sa = np.sin(ang)
-            dx = xx - cx
-            dy = yy - cy
-            xr = ca * dx + sa * dy
-            yr = -sa * dx + ca * dy
+        mode = int(g.choice(3, p=[0.35, 0.45, 0.20]))
+        ranges = [(0.15, 0.28), (0.24, 0.40), (0.36, 0.55)]
+        cov = float(g.uniform(*ranges[mode]))
 
-            d = (xr / rx) ** 2 + (yr / ry) ** 2
-            blob = np.clip(1.0 - d, 0.0, 1.0)
-            blob = blob ** float(g.uniform(0.8, 1.8))
+        thr = float(np.quantile(shape, 1.0 - cov))
+        binary = (shape >= thr).astype(np.float32)
 
-            local = cls._field(g, float(g.uniform(10, 24)), size)
-            blob *= 0.78 + 0.30 * local
-            field = np.maximum(field, blob.astype(np.float32))
-
-        fine = cls._field(g, 9, size)
-        field = 0.94 * field + 0.06 * fine
-
-        # Target moderate cloud coverage. Some patches can still be heavier.
-        coverage = float(g.uniform(0.12, 0.32))
-        thr = float(np.quantile(field, 1.0 - coverage))
-        binary = (field >= thr).astype(np.float32)
-
-        # Soft edges for partial transmission, while keeping alpha exactly zero
-        # outside the binary cloud support.
         support = torch.from_numpy(binary)[None, None]
         support = F.avg_pool2d(
             support,
-            kernel_size=11,
+            kernel_size=9,
             stride=1,
-            padding=5,
+            padding=4,
         )[0, 0].numpy()
 
-        core = np.clip(
-            (field - thr) / max(float(field.max() - thr), 1e-6),
-            0.0,
-            1.0,
-        )
+        d0 = cls._field(g, 64, size)
+        d1 = cls._field(g, 20, size)
+        d2 = cls._field(g, 6, size)
+        density = 0.50 * d0 + 0.32 * d1 + 0.18 * d2
+        density -= density.min()
+        density /= max(float(density.max()), 1e-6)
 
-        alpha = binary * (
-            0.12
-            + 0.72 * (0.45 * support + 0.55 * core)
-        )
-        alpha *= 0.78 + 0.22 * fine
-        alpha = np.clip(alpha, 0.0, 0.88).astype(np.float32)
+        alpha = support * (0.08 + 0.87 * density)
+        alpha = np.clip(alpha, 0.0, 0.95).astype(np.float32)
+        mask = (alpha > 0.12).astype(np.float32)
 
-        # Cloud shadows: translated, blurred opacity in the opposite direction
-        # of the synthetic illumination vector.
         angle = float(g.uniform(0.0, 2.0 * np.pi))
-        dist = int(g.integers(25, 90))
+        dist = int(g.integers(18, 70))
         dy = int(round(np.sin(angle) * dist))
         dx = int(round(np.cos(angle) * dist))
 
@@ -131,60 +108,72 @@ class V2FromNPZDataset(Dataset):
         shadow = torch.from_numpy(shadow)[None, None]
         shadow = F.avg_pool2d(
             shadow,
-            kernel_size=21,
+            kernel_size=15,
             stride=1,
-            padding=10,
+            padding=7,
         )[0, 0].numpy()
-        shadow *= float(g.uniform(0.18, 0.35))
+        shadow *= float(g.uniform(0.18, 0.45))
         shadow = np.clip(shadow, 0.0, 0.45).astype(np.float32)
 
-        return binary, alpha, shadow
+        return mask, alpha, shadow
 
     def __getitem__(self, idx):
         row = self.rows[idx]
-        p = os.path.join(self.root, f"sample_{int(row['idx']):06d}.npz")
+        p = os.path.join(
+            self.root,
+            f"sample_{int(row['idx']):06d}.npz",
+        )
 
         with np.load(p) as d:
             if "clear" not in d:
                 raise ValueError(f"{p} does not contain a clear target.")
+
             clear = d["clear"].astype(np.float32)
+
             old_row = int(d["row"]) if "row" in d else int(row.get("row", 0))
             old_col = int(d["col"]) if "col" in d else int(row.get("col", 0))
-            scene = str(d["scene"]) if "scene" in d else row.get("scene", "")
+            old_seed = old_row * 1000003 + old_col
+
+            if "scene" in d:
+                scene = str(d["scene"])
+            else:
+                scene = row.get("scene", "")
 
         if clear.shape != (3, 256, 256):
             raise ValueError(
                 f"Expected clear shape (3,256,256) in {p}, got {clear.shape}"
             )
 
-        clear = np.clip(clear, 0.0, self.dn_max)
-
         base_seed = int(row.get("cloud_seed", 0))
-        seed = (base_seed ^ (old_row * 1000003 + old_col)) & 0x7FFFFFFF
+        seed = (base_seed ^ old_seed) & 0x7FFFFFFF
+
         mask, alpha, shadow = self._cloud_maps(seed)
+        g = np.random.default_rng(seed + 17)
 
-        g = np.random.default_rng(cloud_seed + 17)
-
-        # Cloud radiance is bright but not forced to saturation.
         cloud_base = np.array(
             [
-                g.uniform(0.74, 0.92),
-                g.uniform(0.78, 0.95),
-                g.uniform(0.80, 0.96),
+                g.uniform(0.82, 0.98),
+                g.uniform(0.84, 1.00),
+                g.uniform(0.88, 1.00),
             ],
             dtype=np.float32,
         )
         spectral = np.array(
             [
+                g.uniform(0.97, 1.03),
                 g.uniform(0.98, 1.03),
-                g.uniform(0.98, 1.03),
-                g.uniform(0.96, 1.02),
+                g.uniform(0.95, 1.02),
             ],
             dtype=np.float32,
         )
 
+        cloud_var = self._field(g, 24, 256)
+        cloud_var = 0.88 + 0.20 * cloud_var
+
         cloud = np.clip(
-            cloud_base[:, None, None] * spectral[:, None, None],
+            cloud_base[:, None, None]
+            * spectral[:, None, None]
+            * cloud_var[None],
             0.0,
             1.0,
         )
@@ -199,82 +188,91 @@ class V2FromNPZDataset(Dataset):
             0.003,
             size=cloudy_n.shape,
         ).astype(np.float32)
-        cloudy_n += noise * (0.25 + 0.75 * alpha[None])
+        cloudy_n += noise * (0.35 + 0.65 * alpha[None])
         cloudy_n = np.clip(cloudy_n, 0.0, 1.0)
 
         cloudy = (cloudy_n * self.dn_max).astype(np.float32)
 
         return {
-            "cloudy": torch.from_numpy(cloudy),
-            "clear": torch.from_numpy(clear.astype(np.float32)),
-            "mask": torch.from_numpy(mask[None].astype(np.float32)),
-            "alpha": torch.from_numpy(alpha[None].astype(np.float32)),
-            "shadow": torch.from_numpy(shadow[None].astype(np.float32)),
+            "cloudy": cloudy,
+            "clear": clear,
+            "mask": mask[None].astype(np.float32),
+            "alpha": alpha[None].astype(np.float32),
+            "shadow": shadow[None].astype(np.float32),
             "scene": scene,
-            "row": row,
-            "col": col,
+            "row": np.int32(old_row),
+            "col": np.int32(old_col),
+            "cloud_seed": np.int64(seed),
         }
 
 
 def main():
     ap = argparse.ArgumentParser(
-        description="Create Synthetic Clouds V2 for native LISS-IV pretraining."
+        description=(
+            "Generate Synthetic Clouds V2 from existing native LISS-IV NPZ "
+            "patches. The original clear TIFF is not required."
+        )
     )
-    ap.add_argument("scenes", nargs="+")
-    ap.add_argument("--output", default="data/synthetic_pretrain_v2")
-    ap.add_argument("--samples-per-scene", type=int, default=256)
-    ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument(
+        "--manifest",
+        default="data/synthetic_pretrain_prod/manifest.csv",
+    )
+    ap.add_argument(
+        "--output",
+        default="data/synthetic_pretrain_v2",
+    )
     ap.add_argument("--dn-max", type=float, default=1023.0)
     args = ap.parse_args()
 
-    os.makedirs(args.output, exist_ok=True)
+    manifest = os.path.abspath(args.manifest)
+    output = os.path.abspath(args.output)
+    os.makedirs(output, exist_ok=True)
 
-    ds = SyntheticLISS4DatasetV2(
-        args.scenes,
-        samples_per_scene=args.samples_per_scene,
-        seed=args.seed,
-        dn_max=args.dn_max,
-    )
+    ds = V2FromNPZDataset(manifest, dn_max=args.dn_max)
 
-    manifest = os.path.join(args.output, "manifest.csv")
-    with open(manifest, "w", newline="", encoding="utf-8") as f:
-        w = csv.writer(f)
-        w.writerow(["idx", "scene", "row", "col", "cloud_seed"])
-        for i, (scene, row, col, cloud_seed) in enumerate(ds.samples):
-            w.writerow([i, scene, row, col, cloud_seed])
+    out_manifest = os.path.join(output, "manifest.csv")
+    fields = ["idx", "scene", "row", "col", "cloud_seed"]
 
-    for i in range(len(ds)):
-        item = ds[i]
-        np.savez_compressed(
-            os.path.join(args.output, f"sample_{i:06d}.npz"),
-            cloudy=item["cloudy"].numpy().astype(np.float32),
-            clear=item["clear"].numpy().astype(np.float32),
-            mask=item["mask"].numpy().astype(np.float32),
-            alpha=item["alpha"].numpy().astype(np.float32),
-            shadow=item["shadow"].numpy().astype(np.float32),
-            scene=item["scene"],
-            row=np.int32(item["row"]),
-            col=np.int32(item["col"]),
-        )
+    with open(out_manifest, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=fields)
+        w.writeheader()
 
-    print("=== SYNTHETIC LISS-IV V2 ===")
-    print(f"Scenes : {len(args.scenes)}")
-    print(f"Samples: {len(ds)}")
-    print(f"Output : {os.path.abspath(args.output)}")
-    print(f"Manifest: {os.path.abspath(manifest)}")
+        for i in range(len(ds)):
+            item = ds[i]
+
+            np.savez_compressed(
+                os.path.join(output, f"sample_{i:06d}.npz"),
+                cloudy=item["cloudy"],
+                clear=item["clear"],
+                mask=item["mask"],
+                alpha=item["alpha"],
+                shadow=item["shadow"],
+                scene=item["scene"],
+                row=item["row"],
+                col=item["col"],
+            )
+
+            w.writerow(
+                {
+                    "idx": i,
+                    "scene": item["scene"],
+                    "row": int(item["row"]),
+                    "col": int(item["col"]),
+                    "cloud_seed": int(item["cloud_seed"]),
+                }
+            )
+
+    print("=== SYNTHETIC LISS-IV V2 FROM EXISTING NPZ ===")
+    print(f"Source manifest: {manifest}")
+    print(f"Samples        : {len(ds)}")
+    print(f"Output         : {output}")
+    print(f"Manifest       : {out_manifest}")
     print()
-    print("V2 corruption:")
-    print("  - multiple cloud masses with irregular shape")
-    print("  - moderate 12%-32% cloud coverage")
-    print("  - variable cloud opacity")
-    print("  - band-dependent cloud radiance")
-    print("  - translated cloud shadows")
-    print("  - small atmospheric/sensor noise")
-    print()
-    print(
-        "IMPORTANT: native LISS-IV targets with synthetic cloud corruption. "
-        "Use for pretraining/augmentation, not real-cloud benchmark reporting."
-    )
+    print("Uses the existing clear LISS-IV patches already present in the dataset.")
+    print("V2 includes controlled 15-55% cloud coverage, variable opacity,")
+    print("spatially varying cloud radiance, translated shadows, and noise.")
+    print("Cloud opacity is zero outside cloud support.")
+    print("This remains synthetic pretraining data, not a real-cloud benchmark.")
 
 
 if __name__ == "__main__":
