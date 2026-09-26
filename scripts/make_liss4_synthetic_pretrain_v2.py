@@ -53,7 +53,9 @@ class SyntheticLISS4DatasetV2(Dataset):
                     col = int(rng.integers(0, w - 255))
 
                     with rasterio.open(scene) as src:
-                        patch = src.read(window=Window(col, row, 256, 256)).astype(np.float32)
+                        patch = src.read(
+                            window=Window(col, row, 256, 256)
+                        ).astype(np.float32)
 
                     if float(np.mean(patch == 0)) <= 0.30:
                         cloud_seed = int(rng.integers(0, 2**31 - 1))
@@ -79,7 +81,10 @@ class SyntheticLISS4DatasetV2(Dataset):
             x = F.avg_pool2d(x, kernel_size=3, stride=1, padding=1)
 
         x = F.interpolate(
-            x, size=(size, size), mode="bilinear", align_corners=False
+            x,
+            size=(size, size),
+            mode="bilinear",
+            align_corners=False,
         )[0, 0].numpy()
 
         x -= x.min()
@@ -89,69 +94,50 @@ class SyntheticLISS4DatasetV2(Dataset):
     @classmethod
     def _cloud_maps(cls, seed, size=256):
         g = np.random.default_rng(seed)
-        yy, xx = np.mgrid[0:size, 0:size].astype(np.float32)
 
-        # Build several compact cloud masses instead of one giant low-frequency blob.
-        n_blobs = int(g.integers(2, 6))
-        field = np.zeros((size, size), dtype=np.float32)
+        # Cloud geometry.
+        f0 = cls._field(g, 64, size)
+        f1 = cls._field(g, 28, size)
+        f2 = cls._field(g, 10, size)
 
-        for _ in range(n_blobs):
-            cx = float(g.uniform(0.12, 0.88) * size)
-            cy = float(g.uniform(0.12, 0.88) * size)
-            rx = float(g.uniform(24, 58))
-            ry = float(g.uniform(18, 52))
-            ang = float(g.uniform(0.0, 2.0 * np.pi))
+        shape = 0.55 * f0 + 0.32 * f1 + 0.13 * f2
+        shape -= shape.min()
+        shape /= max(float(shape.max()), 1e-6)
 
-            ca = np.cos(ang)
-            sa = np.sin(ang)
-            dx = xx - cx
-            dy = yy - cy
-            xr = ca * dx + sa * dy
-            yr = -sa * dx + ca * dy
+        # Vary cloud coverage by sample instead of centering most samples near 50%.
+        mode = int(g.choice(3, p=[0.35, 0.45, 0.20]))
+        ranges = [(0.15, 0.28), (0.24, 0.40), (0.36, 0.55)]
+        cov = float(g.uniform(*ranges[mode]))
 
-            d = (xr / rx) ** 2 + (yr / ry) ** 2
-            blob = np.clip(1.0 - d, 0.0, 1.0)
-            blob = blob ** float(g.uniform(0.8, 1.8))
+        # Percentile threshold gives a controlled initial coverage.
+        thr = float(np.quantile(shape, 1.0 - cov))
+        binary = (shape >= thr).astype(np.float32)
 
-            local = cls._field(g, float(g.uniform(10, 24)), size)
-            blob *= 0.78 + 0.30 * local
-            field = np.maximum(field, blob.astype(np.float32))
-
-        fine = cls._field(g, 9, size)
-        field = 0.94 * field + 0.06 * fine
-
-        # Target moderate cloud coverage. Some patches can still be heavier.
-        coverage = float(g.uniform(0.12, 0.32))
-        thr = float(np.quantile(field, 1.0 - coverage))
-        binary = (field >= thr).astype(np.float32)
-
-        # Soft edges for partial transmission, while keeping alpha exactly zero
-        # outside the binary cloud support.
+        # Soft cloud boundary.
         support = torch.from_numpy(binary)[None, None]
         support = F.avg_pool2d(
             support,
-            kernel_size=11,
+            kernel_size=9,
             stride=1,
-            padding=5,
+            padding=4,
         )[0, 0].numpy()
 
-        core = np.clip(
-            (field - thr) / max(float(field.max() - thr), 1e-6),
-            0.0,
-            1.0,
-        )
+        # Internal optical-density structure: coarse + medium + fine variations.
+        d0 = cls._field(g, 64, size)
+        d1 = cls._field(g, 20, size)
+        d2 = cls._field(g, 6, size)
+        density = 0.50 * d0 + 0.32 * d1 + 0.18 * d2
+        density -= density.min()
+        density /= max(float(density.max()), 1e-6)
 
-        alpha = binary * (
-            0.12
-            + 0.72 * (0.45 * support + 0.55 * core)
-        )
-        alpha *= 0.78 + 0.22 * fine
-        alpha = np.clip(alpha, 0.0, 0.88).astype(np.float32)
+        # Thin edges and dense cores, but zero outside actual cloud support.
+        alpha = support * (0.08 + 0.87 * density)
+        alpha = np.clip(alpha, 0.0, 0.95).astype(np.float32)
+        mask = (alpha > 0.12).astype(np.float32)
 
-        # Cloud shadows: translated, blurred opacity in the opposite direction
-        # of the synthetic illumination vector.
+        # Translate + blur cloud opacity to form a soft cloud shadow.
         angle = float(g.uniform(0.0, 2.0 * np.pi))
-        dist = int(g.integers(25, 90))
+        dist = int(g.integers(18, 70))
         dy = int(round(np.sin(angle) * dist))
         dx = int(round(np.cos(angle) * dist))
 
@@ -172,46 +158,53 @@ class SyntheticLISS4DatasetV2(Dataset):
         shadow = torch.from_numpy(shadow)[None, None]
         shadow = F.avg_pool2d(
             shadow,
-            kernel_size=21,
+            kernel_size=15,
             stride=1,
-            padding=10,
+            padding=7,
         )[0, 0].numpy()
-        shadow *= float(g.uniform(0.18, 0.35))
+        shadow *= float(g.uniform(0.18, 0.45))
         shadow = np.clip(shadow, 0.0, 0.45).astype(np.float32)
 
-        return binary, alpha, shadow
+        return mask, alpha, shadow
 
     def __getitem__(self, idx):
         scene, row, col, cloud_seed = self.samples[idx]
 
         with rasterio.open(scene) as src:
-            clear = src.read(window=Window(col, row, 256, 256)).astype(np.float32)
+            clear = src.read(
+                window=Window(col, row, 256, 256)
+            ).astype(np.float32)
 
         clear = np.clip(clear, 0.0, self.dn_max)
         mask, alpha, shadow = self._cloud_maps(cloud_seed)
 
         g = np.random.default_rng(cloud_seed + 17)
 
-        # Cloud radiance is bright but not forced to saturation.
         cloud_base = np.array(
             [
-                g.uniform(0.74, 0.92),
-                g.uniform(0.78, 0.95),
-                g.uniform(0.80, 0.96),
+                g.uniform(0.82, 0.98),
+                g.uniform(0.84, 1.00),
+                g.uniform(0.88, 1.00),
             ],
             dtype=np.float32,
         )
         spectral = np.array(
             [
+                g.uniform(0.97, 1.03),
                 g.uniform(0.98, 1.03),
-                g.uniform(0.98, 1.03),
-                g.uniform(0.96, 1.02),
+                g.uniform(0.95, 1.02),
             ],
             dtype=np.float32,
         )
 
+        # Slowly varying cloud radiance adds internal brightness structure.
+        cloud_var = self._field(g, 24, 256)
+        cloud_var = 0.88 + 0.20 * cloud_var
+
         cloud = np.clip(
-            cloud_base[:, None, None] * spectral[:, None, None],
+            cloud_base[:, None, None]
+            * spectral[:, None, None]
+            * cloud_var[None],
             0.0,
             1.0,
         )
@@ -226,7 +219,7 @@ class SyntheticLISS4DatasetV2(Dataset):
             0.003,
             size=cloudy_n.shape,
         ).astype(np.float32)
-        cloudy_n += noise * (0.25 + 0.75 * alpha[None])
+        cloudy_n += noise * (0.35 + 0.65 * alpha[None])
         cloudy_n = np.clip(cloudy_n, 0.0, 1.0)
 
         cloudy = (cloudy_n * self.dn_max).astype(np.float32)
@@ -291,10 +284,10 @@ def main():
     print(f"Manifest: {os.path.abspath(manifest)}")
     print()
     print("V2 corruption:")
-    print("  - multiple cloud masses with irregular shape")
-    print("  - moderate 12%-32% cloud coverage")
-    print("  - variable cloud opacity")
-    print("  - band-dependent cloud radiance")
+    print("  - controlled 15-55% cloud coverage")
+    print("  - multi-scale irregular cloud geometry")
+    print("  - internal thin/medium/thick opacity variation")
+    print("  - band-dependent + spatially varying cloud radiance")
     print("  - translated cloud shadows")
     print("  - small atmospheric/sensor noise")
     print()
