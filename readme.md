@@ -11,9 +11,29 @@ The project did not arrive at its current training pipeline in one step. It bega
 
 The goal of this README is to preserve that story rather than simply presenting the final code.
 
-> **Current status:** a fresh 50-epoch training run is in progress using the corrected training pipeline. The historical 25-epoch model remains documented as the previous experiment.
+> **Current status:** the original Sentinel-2 ClearSkyUNet experiment is preserved as a historical baseline. The project is now being migrated to an LISS-IV DSen2-CR-style reconstruction pipeline for the BAH 2026 cloud-removal problem.
+
 
 ---
+# 🛰️ 0. LISS-IV DSen2-CR Migration
+
+The next model family is being adapted for **LISS-IV** rather than Sentinel-2. LISS-IV multispectral imagery provides Green, Red, and NIR bands; the project therefore uses the fixed optical order:
+
+    [G, R, NIR]
+
+The current Phase-1 implementation adds:
+
+- `src/liss4.py` — fixed-range LISS-IV normalization and data checks.
+- `src/liss4_dataset.py` — manifest-driven cloudy/clear pair loading.
+- `src/liss4_dsen2cr.py` — DSen2-CR-style residual model for 3-band LISS-IV, with optional VV/VH SAR fusion.
+- `scripts/inspect_liss4.py` — GeoTIFF inspection before training.
+- `scripts/validate_liss4_setup.py` — software-level sanity checks.
+- `configs/liss4_manifest.csv.example` — dataset manifest template.
+- `docs/LISS4_PIPELINE.md` — phase gates and training plan.
+
+**No LISS-IV training has started yet.** The gate is intentional: we first need a real cloudy/clear LISS-IV pair, verify its band ordering/radiometric scale, and confirm geometric co-registration.
+
+Reference sensor specifications describe LISS-IV as a 3-band VNIR sensor (Green, Red, NIR) with about 5.8 m spatial resolution. citeturn317584search22turn317584search2
 
 # 📖 1. Where the Idea Started
 
