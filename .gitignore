@@ -1,6 +1,13 @@
 api
 # Ignore dataset archives and extracted raw data
-data/
+data/*
+!data/raw/
+!data/raw/cloudy/
+!data/raw/cloudy/.gitkeep
+!data/raw/clear/
+!data/raw/clear/.gitkeep
+!data/raw/sar/
+!data/raw/sar/.gitkeep
 *.tar.gz
 *.npy
 
