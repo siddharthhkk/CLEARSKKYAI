@@ -27,10 +27,13 @@ class NPZLISS4Dataset(Dataset):
         with open(self.manifest, "r", newline="", encoding="utf-8") as f:
             rows = list(csv.DictReader(f))
 
-        self.rows = [
-            r for r in rows
-            if os.path.abspath(r["scene"]) in allowed_scenes
-        ]
+        if allowed_scenes:
+            self.rows = [
+                r for r in rows
+                if os.path.abspath(r["scene"]) in allowed_scenes
+            ]
+        else:
+            self.rows = rows
 
         if not self.rows:
             raise ValueError("No samples remain after scene filtering.")
@@ -59,8 +62,10 @@ def main():
         description="Train DSen2-CR-style LISS-IV model on synthetic native-LISS-IV clouds."
     )
     ap.add_argument("--manifest", default="data/synthetic_pretrain/manifest.csv")
-    ap.add_argument("--train-scene", action="append", required=True)
-    ap.add_argument("--val-scene", action="append", required=True)
+    ap.add_argument("--train-manifest", default=None)
+    ap.add_argument("--val-manifest", default=None)
+    ap.add_argument("--train-scene", action="append")
+    ap.add_argument("--val-scene", action="append")
     ap.add_argument("--epochs", type=int, default=20)
     ap.add_argument("--batch-size", type=int, default=1)
     ap.add_argument("--grad-accum", type=int, default=4)
@@ -76,13 +81,29 @@ def main():
     if device.type == "cuda":
         print(f"GPU          : {torch.cuda.get_device_name(0)}")
 
-    train_scenes = {os.path.abspath(p) for p in args.train_scene}
-    val_scenes = {os.path.abspath(p) for p in args.val_scene}
-    if train_scenes & val_scenes:
-        raise ValueError("A scene cannot appear in both train and validation.")
+    if args.train_manifest or args.val_manifest:
+        if not (args.train_manifest and args.val_manifest):
+            raise ValueError("Provide both --train-manifest and --val-manifest.")
 
-    train_ds = NPZLISS4Dataset(args.manifest, train_scenes)
-    val_ds = NPZLISS4Dataset(args.manifest, val_scenes)
+        train_manifest = os.path.abspath(args.train_manifest)
+        val_manifest = os.path.abspath(args.val_manifest)
+
+        train_ds = NPZLISS4Dataset(train_manifest, set())
+        val_ds = NPZLISS4Dataset(val_manifest, set())
+    else:
+        if not args.train_scene or not args.val_scene:
+            raise ValueError(
+                "Provide --train-manifest/--val-manifest or both "
+                "--train-scene/--val-scene."
+            )
+
+        train_scenes = {os.path.abspath(p) for p in args.train_scene}
+        val_scenes = {os.path.abspath(p) for p in args.val_scene}
+        if train_scenes & val_scenes:
+            raise ValueError("A scene cannot appear in both train and validation.")
+
+        train_ds = NPZLISS4Dataset(args.manifest, train_scenes)
+        val_ds = NPZLISS4Dataset(args.manifest, val_scenes)
 
     train_dl = DataLoader(
         train_ds,
