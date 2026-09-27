@@ -1,0 +1,91 @@
+import argparse
+import math
+
+import numpy as np
+import rasterio
+
+
+def metric(pred, target, mask):
+    if not np.any(mask):
+        return float("nan"), float("nan")
+
+    d = pred[:, mask] - target[:, mask]
+    mae = float(np.mean(np.abs(d)))
+    mse = float(np.mean(d * d))
+    psnr = 20.0 * math.log10(1.0 / math.sqrt(mse)) if mse > 0 else float("inf")
+    return mae, psnr
+
+
+def load(path, dn_max):
+    with rasterio.open(path) as src:
+        x = src.read().astype(np.float32)
+
+    if x.shape[0] != 3:
+        raise ValueError(f"{path}: expected 3 bands, got {x.shape}")
+
+    return np.clip(x, 0.0, dn_max) / dn_max
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        description="Compare V2 and V3 on the real Guwahati pair inside/outside difference proxies."
+    )
+    ap.add_argument("--cloudy", default="data/raw/cloudy/guwahati_cloudy_test.tif")
+    ap.add_argument("--clear", default="data/raw/clear/guwahati_clear.tif")
+    ap.add_argument("--v2", default="data/eval/guwahati_liss4_dsen2cr_v2.tif")
+    ap.add_argument("--v3", default="data/eval/guwahati_liss4_dsen2cr_v3.tif")
+    ap.add_argument("--dn-max", type=float, default=1023.0)
+    ap.add_argument("--thresholds", type=float, nargs="+", default=[10, 25, 50, 100])
+    args = ap.parse_args()
+
+    c = load(args.cloudy, args.dn_max)
+    t = load(args.clear, args.dn_max)
+    v2 = load(args.v2, args.dn_max)
+    v3 = load(args.v3, args.dn_max)
+
+    for name, x in [("Cloudy", c), ("V2", v2), ("V3", v3)]:
+        if x.shape != t.shape:
+            raise ValueError(f"{name} shape {x.shape} != target shape {t.shape}")
+
+    diff_dn = np.max(np.abs(c - t), axis=0) * args.dn_max
+
+    print("=== GUWAHATI LISS-IV V2 / V3 REGION ANALYSIS ===")
+    print("Proxy = max per-pixel |cloudy-clear| across G/R/NIR bands")
+    print("IMPORTANT: this is a difference-based proxy, not a true cloud mask.")
+    print()
+
+    for thr in args.thresholds:
+        reg = diff_dn >= thr
+        non = ~reg
+
+        b_r = metric(c, t, reg)[1]
+        b_n = metric(c, t, non)[1]
+
+        print(f"--- Threshold >= {thr:g} DN ---")
+        print(f"Proxy coverage: {reg.mean() * 100:.2f}%")
+
+        for name, x in [("V2", v2), ("V3", v3)]:
+            mae_r, psnr_r = metric(x, t, reg)
+            mae_n, psnr_n = metric(x, t, non)
+
+            print(
+                f"{name:<2} region MAE={mae_r:.6f} PSNR={psnr_r:.3f} dB "
+                f"| non-region MAE={mae_n:.6f} PSNR={psnr_n:.3f} dB"
+            )
+            print(
+                f"   gains: region={psnr_r - b_r:+.3f} dB "
+                f"| non-region={psnr_n - b_n:+.3f} dB"
+            )
+
+        print()
+
+    print("Done.")
+    print(
+        "Interpret as diagnostic evidence only: temporal, illumination, "
+        "registration, and other acquisition differences can also contribute "
+        "to cloudy-vs-clear differences."
+    )
+
+
+if __name__ == "__main__":
+    main()
