@@ -27,3 +27,14 @@ weights/dsen2cr_sar_carl.pth
 real_cloud_demo/
 
 real_cloud_diverse/
+
+# Local experiment/evaluation data
+data/raw/clear/*.tif
+data/raw/clear/*.tiff
+data/raw/cloudy/*.tif
+data/raw/cloudy/*.tiff
+data/raw/sar/*.tif
+data/raw/sar/*.tiff
+
+# Local training checkpoint state
+weights/*_latest.pth
