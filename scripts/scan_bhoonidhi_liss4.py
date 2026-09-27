@@ -10,7 +10,7 @@ import rasterio
 
 DATE_RE = re.compile(r"(20\d{2})(\d{2})(\d{2})")
 FOLDER_DATE_RE = re.compile(
-    r"(?<!\d)(\d{2})(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)(20\d{2})(?!\d)",
+    r"(\d{2})(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)(20\d{2})",
     re.IGNORECASE,
 )
 PATH_ROW_RE = re.compile(r"(?<!\d)(\d{3})[_-](\d{2})(?!\d)", re.IGNORECASE)
