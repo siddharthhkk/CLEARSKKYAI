@@ -23,3 +23,9 @@ previews/*_embed.svg
 *.tar
 *.tar.gz
 *.npy
+
+# Local LISS-IV experimental data
+data/synthetic_pretrain_prod/
+data/raw/bhoonidhi_liss4/
+data/raw/chennai/
+data/eval/
