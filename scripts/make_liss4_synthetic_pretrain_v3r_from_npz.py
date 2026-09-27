@@ -65,8 +65,9 @@ class V3RealFromNPZDataset(Dataset):
         shape -= shape.min()
         shape /= max(float(shape.max()), 1e-6)
 
-        mode = int(g.choice(3, p=[0.40, 0.45, 0.15]))
-        ranges = [(0.12, 0.24), (0.18, 0.32), (0.25, 0.40)]
+        mode = int(g.choice(3, p=[0.35, 0.45, 0.20]))
+        # Keep V2 cloud-support geometry unchanged for this controlled test.
+        ranges = [(0.15, 0.28), (0.24, 0.40), (0.36, 0.55)]
         cov = float(g.uniform(*ranges[mode]))
 
         thr = float(np.quantile(shape, 1.0 - cov))
@@ -260,6 +261,7 @@ def main():
     print("- lower cloud radiance")
     print("- lower cloud opacity")
     print("- lower shadow strength")
+    print("- unchanged V2 cloud-support coverage/geometry")
     print("- slightly lower noise")
     print("- same basic multi-scale cloud geometry")
     print()
