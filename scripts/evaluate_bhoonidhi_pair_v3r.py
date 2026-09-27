@@ -5,6 +5,7 @@ import sys
 
 import numpy as np
 import rasterio
+import rasterio.warp
 import torch
 from rasterio.enums import Resampling
 from rasterio.transform import Affine
