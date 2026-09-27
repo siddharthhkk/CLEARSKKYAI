@@ -9,7 +9,17 @@ import rasterio
 
 
 DATE_RE = re.compile(r"(20\d{2})(\d{2})(\d{2})")
+FOLDER_DATE_RE = re.compile(
+    r"(?<!\d)(\d{2})(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)(20\d{2})(?!\d)",
+    re.IGNORECASE,
+)
 PATH_ROW_RE = re.compile(r"(?<!\d)(\d{3})[_-](\d{2})(?!\d)", re.IGNORECASE)
+# Bhoonidhi/ISRO product folder names seen in this batch contain:
+#   ...<3-digit path><4-digit row>SSANSTUC00GT...
+FOLDER_PATH_ROW_RE = re.compile(
+    r"(?<!\d)(\d{3})(\d{4})SSANSTUC00GT",
+    re.IGNORECASE,
+)
 SCENE_RE = re.compile(r"(\d{6}[_-]\d{3}[_-]\d{2})", re.IGNORECASE)
 
 
@@ -22,14 +32,24 @@ def parse_date(text):
         return ""
 
     m = DATE_RE.search(text)
-    if not m:
-        return ""
+    if m:
+        y, mo, d = map(int, m.groups())
+        try:
+            return dt.date(y, mo, d).isoformat()
+        except ValueError:
+            pass
 
-    y, mo, d = map(int, m.groups())
-    try:
-        return dt.date(y, mo, d).isoformat()
-    except ValueError:
-        return ""
+    m = FOLDER_DATE_RE.search(text)
+    if m:
+        d, mon, y = m.groups()
+        try:
+            return dt.datetime.strptime(
+                f"{d}{mon}{y}", "%d%b%Y"
+            ).date().isoformat()
+        except ValueError:
+            pass
+
+    return ""
 
 
 def parse_path_row(text):
@@ -37,10 +57,14 @@ def parse_path_row(text):
         return "", ""
 
     m = PATH_ROW_RE.search(text)
-    if not m:
-        return "", ""
+    if m:
+        return m.group(1), m.group(2)
 
-    return m.group(1), m.group(2)
+    m = FOLDER_PATH_ROW_RE.search(text)
+    if m:
+        return m.group(1), str(int(m.group(2)))
+
+    return "", ""
 
 
 def parse_scene_id(text):
@@ -54,19 +78,33 @@ def parse_scene_id(text):
     return ""
 
 
+def parse_folder_metadata(folder_name):
+    # The folder itself is the product identifier in the user's extracted
+    # Bhoonidhi batch. This fallback is important because some downloads
+    # contain only BAND*.tif files and no parseable XML/TXT metadata.
+    date = parse_date(folder_name)
+    path_no, row_no = parse_path_row(folder_name)
+
+    return {
+        "date": date,
+        "path": path_no,
+        "row": row_no,
+        "scene_id": folder_name,
+        "satellite": "ResourceSat-2" if folder_name.upper().startswith("R2F") else "",
+        "sensor": "LISS4" if "LISS4" in folder_name.upper() or "LIS4" in folder_name.upper() else "",
+        "product_hint": folder_name[:4] if len(folder_name) >= 4 else "",
+    }
+
+
 def flatten_xml_values(root):
     vals = []
 
     for elem in root.iter():
         if elem.text and elem.text.strip():
-            vals.append(
-                f"{elem.tag}={clean_text(elem.text)}"
-            )
+            vals.append(f"{elem.tag}={clean_text(elem.text)}")
 
         for k, v in elem.attrib.items():
-            vals.append(
-                f"{k}={clean_text(v)}"
-            )
+            vals.append(f"{k}={clean_text(v)}")
 
     return vals
 
@@ -121,11 +159,7 @@ def read_metadata(folder, filenames):
     if "liss4" in lower or "lis4" in lower:
         sensor = "LISS4"
 
-    for candidate in [
-        "R2FE",
-        "R2AF",
-        "R2A",
-    ]:
+    for candidate in ["R2FE", "R2AF", "R2A"]:
         if candidate.lower() in lower:
             product = candidate
             break
@@ -178,11 +212,17 @@ def tif_info(path):
 def classify_band(name):
     low = name.lower()
 
-    if "band2" in low or re.search(r"(?:^|[_-])b2(?:nd)?(?:[_-]|\.)", low):
+    if "band2" in low or re.search(
+        r"(?:^|[_-])b2(?:nd)?(?:[_-]|\.)", low
+    ):
         return "BAND2"
-    if "band3" in low or re.search(r"(?:^|[_-])b3(?:nd)?(?:[_-]|\.)", low):
+    if "band3" in low or re.search(
+        r"(?:^|[_-])b3(?:nd)?(?:[_-]|\.)", low
+    ):
         return "BAND3"
-    if "band4" in low or re.search(r"(?:^|[_-])b4(?:nd)?(?:[_-]|\.)", low):
+    if "band4" in low or re.search(
+        r"(?:^|[_-])b4(?:nd)?(?:[_-]|\.)", low
+    ):
         return "BAND4"
 
     return ""
@@ -200,7 +240,20 @@ def scan(root):
         if not tifs:
             continue
 
-        meta = read_metadata(dirpath, filenames)
+        folder_name = os.path.basename(os.path.normpath(dirpath))
+        meta = parse_folder_metadata(folder_name)
+
+        # Real metadata files override folder-name fallbacks when present.
+        file_meta = read_metadata(dirpath, filenames)
+
+        for k, v in file_meta.items():
+            if v:
+                meta[k] = v
+
+        # Always keep the actual extracted product folder as a stable scene ID
+        # when no scene ID is present in metadata.
+        if not meta["scene_id"] or meta["scene_id"] == "":
+            meta["scene_id"] = folder_name
 
         folder_key = os.path.abspath(dirpath)
 
@@ -229,11 +282,36 @@ def scan(root):
     return groups
 
 
+def list_top_level_dirs_without_tif(root):
+    out = []
+
+    for name in sorted(os.listdir(root)):
+        path = os.path.join(root, name)
+
+        if not os.path.isdir(path):
+            continue
+
+        found = False
+
+        for dirpath, _, filenames in os.walk(path):
+            if any(
+                f.lower().endswith((".tif", ".tiff"))
+                for f in filenames
+            ):
+                found = True
+                break
+
+        if not found:
+            out.append(name)
+
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(
         description=(
-            "Scan extracted Bhoonidhi LISS-IV downloads, group files by "
-            "extracted scene folder, inspect GeoTIFF metadata, and write a CSV summary."
+            "Scan extracted Bhoonidhi LISS-IV downloads, including product "
+            "folder-name metadata, GeoTIFF metadata, and scene footprints."
         )
     )
     ap.add_argument(
@@ -267,17 +345,14 @@ def main():
 
         bands = sorted(
             {x["band"] for x in tifs if x["band"]},
-            key=lambda x: {"BAND2": 0, "BAND3": 1, "BAND4": 2}.get(x, 99),
+            key=lambda x: {
+                "BAND2": 0,
+                "BAND3": 1,
+                "BAND4": 2,
+            }.get(x, 99),
         )
 
-        scene_id = meta["scene_id"]
-
-        if not scene_id:
-            for x in tifs:
-                scene_id = parse_scene_id(x["name"])
-                if scene_id:
-                    break
-
+        # Recover from TIFF filenames as a final fallback.
         if not meta["date"]:
             for x in tifs:
                 meta["date"] = parse_date(x["name"])
@@ -292,14 +367,12 @@ def main():
                     meta["row"] = r
                     break
 
-        # First TIFF is sufficient for scene-level grid metadata because
-        # LISS-IV bands in a product should share the same raster grid.
         ti = tifs[0]
 
         rows.append(
             {
                 "folder": folder,
-                "scene_id": scene_id,
+                "scene_id": meta["scene_id"],
                 "date": meta["date"],
                 "satellite": meta["satellite"],
                 "sensor": meta["sensor"],
@@ -335,9 +408,11 @@ def main():
         w.writeheader()
         w.writerows(rows)
 
+    missing = list_top_level_dirs_without_tif(root)
+
     print("=== BHOONIDHI LISS-IV SCENE INVENTORY ===")
-    print(f"Root folders scanned: {os.path.abspath(root)}")
-    print(f"Scene groups       : {len(rows)}")
+    print(f"Root scanned       : {os.path.abspath(root)}")
+    print(f"Scene groups found : {len(rows)}")
     print(f"Inventory CSV      : {out}")
     print()
 
@@ -351,13 +426,25 @@ def main():
             f"path/row={row['path'] or '?'}/{row['row'] or '?'} | "
             f"bands={row['bands_found'] or '?'} | "
             f"size={row['width']}x{row['height']} | "
-            f"files={row['tif_count']}"
+            f"files={row['tif_count']} | "
+            f"bounds=({row['left']:.4f},{row['bottom']:.4f},"
+            f"{row['right']:.4f},{row['top']:.4f})"
+        )
+
+    if missing:
+        print()
+        print("Top-level folders with NO GeoTIFF found:")
+        for name in missing:
+            print(f"  - {name}")
+        print(
+            "\nThis explains why the scene count may be lower than the "
+            "number of ZIPs/folders you downloaded."
         )
 
     print()
     print(
-        "Next step: use this inventory to identify same-footprint candidates "
-        "before downloading additional cloudy scenes."
+        "Next: use the CSV + footprints to match scenes sharing the same "
+        "area, then inspect dates/cloud content for clear/cloudy pairs."
     )
 
 
