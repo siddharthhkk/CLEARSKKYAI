@@ -1,40 +1,25 @@
-api
-# Ignore dataset archives and extracted raw data
-data/*
-!data/raw/
-!data/raw/cloudy/
-!data/raw/cloudy/.gitkeep
-!data/raw/clear/
-!data/raw/clear/.gitkeep
-!data/raw/sar/
-!data/raw/sar/.gitkeep
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Local / raw satellite data
+data/raw/**
+data/eval/**
+data/synthetic_pretrain/**
+data/synthetic_pretrain_v2/**
+data/synthetic_pretrain_v3r/**
+
+# Local model checkpoints
+weights/*.pth
+weights/*.hdf5
+!weights/README.md
+
+# Temporary preview embeds
+previews/*_embed.svg
+
+# Archives / local arrays
+*.zip
+*.tar
 *.tar.gz
 *.npy
-
-# Python cache
-__pycache__/
-*.pyc
-
-# DO NOT ignore the mini demo samples
-!demo_samples/
-!weights/data/
-__pycache__/
-weights/latest_model.pth
-
-weights/model_SARcarl.hdf5
-weights/dsen2cr_sar_carl.pth
-# Streamed real-cloud demo data (keep dataset files out of Git)
-real_cloud_demo/
-
-real_cloud_diverse/
-
-# Local experiment/evaluation data
-data/raw/clear/*.tif
-data/raw/clear/*.tiff
-data/raw/cloudy/*.tif
-data/raw/cloudy/*.tiff
-data/raw/sar/*.tif
-data/raw/sar/*.tiff
-
-# Local training checkpoint state
-weights/*_latest.pth
