@@ -4,13 +4,15 @@ Model checkpoints are intentionally kept out of Git.
 
 ## Primary LISS-IV model
 
-The active V3R checkpoint is generated locally with:
+The V3R checkpoint is local and intentionally not redistributed. The best checkpoint currently on the project workstation records epoch 16 and 34.501 dB synthetic validation PSNR. To train/save a checkpoint at the inference command's default path, with the V3R split manifests available, run:
 
-    python scripts/train_liss4_synthetic.py
+    python scripts/train_liss4_synthetic.py --output weights/liss4_dsen2cr_synthetic_v3r.pth
 
-A typical local checkpoint path is:
+The inference script's default checkpoint path is:
 
     weights/liss4_dsen2cr_synthetic_v3r.pth
+
+Checkpoints are ignored by Git; on a fresh clone, create one by training or copy an authorized local checkpoint into this directory.
 
 ## Published DSen2-CR baseline
 

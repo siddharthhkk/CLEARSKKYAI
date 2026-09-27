@@ -1,10 +1,17 @@
 import csv
 import os
+import sys
 import tempfile
 
 import numpy as np
 import rasterio
 import torch
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
+SRC_DIR = os.path.join(PROJECT_ROOT, "src")
+if SRC_DIR not in sys.path:
+    sys.path.insert(0, SRC_DIR)
 
 from liss4 import denormalize_liss4, normalize_liss4, suggested_dn_max
 from liss4_dataset import LISS4PairDataset

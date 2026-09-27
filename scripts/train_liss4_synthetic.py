@@ -59,7 +59,7 @@ def main():
     ap = argparse.ArgumentParser(
         description="Train DSen2-CR-style LISS-IV model on synthetic native-LISS-IV clouds."
     )
-    ap.add_argument("--manifest", default="data/synthetic_pretrain/manifest.csv")
+    ap.add_argument("--manifest", default="data/synthetic_pretrain_v3r/manifest.csv")
     ap.add_argument("--train-manifest", default=None)
     ap.add_argument("--val-manifest", default=None)
     ap.add_argument("--train-scene", action="append")
@@ -76,10 +76,24 @@ def main():
     ap.add_argument("--resume", default=None)
     args = ap.parse_args()
 
+    if args.epochs < 1:
+        raise ValueError("--epochs must be at least 1.")
+    if args.batch_size < 1:
+        raise ValueError("--batch-size must be at least 1.")
+    if args.grad_accum < 1:
+        raise ValueError("--grad-accum must be at least 1.")
+    if args.features < 1 or args.blocks < 1:
+        raise ValueError("--features and --blocks must be at least 1.")
+    if args.lambda_cloud < 0:
+        raise ValueError("--lambda-cloud must be non-negative.")
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device       : {device}")
     if device.type == "cuda":
         print(f"GPU          : {torch.cuda.get_device_name(0)}")
+
+    train_source = None
+    val_source = None
 
     if args.train_manifest or args.val_manifest:
         if not (args.train_manifest and args.val_manifest):
@@ -90,20 +104,40 @@ def main():
 
         train_ds = NPZLISS4Dataset(train_manifest, set())
         val_ds = NPZLISS4Dataset(val_manifest, set())
+        train_source = train_manifest
+        val_source = val_manifest
     else:
-        if not args.train_scene or not args.val_scene:
-            raise ValueError(
-                "Provide --train-manifest/--val-manifest or both "
-                "--train-scene/--val-scene."
-            )
+        if args.train_scene or args.val_scene:
+            if not args.train_scene or not args.val_scene:
+                raise ValueError(
+                    "Provide both --train-scene and --val-scene when using scene filters."
+                )
 
-        train_scenes = {os.path.abspath(p) for p in args.train_scene}
-        val_scenes = {os.path.abspath(p) for p in args.val_scene}
-        if train_scenes & val_scenes:
-            raise ValueError("A scene cannot appear in both train and validation.")
+            train_scenes = {os.path.abspath(p) for p in args.train_scene}
+            val_scenes = {os.path.abspath(p) for p in args.val_scene}
+            if train_scenes & val_scenes:
+                raise ValueError("A scene cannot appear in both train and validation.")
 
-        train_ds = NPZLISS4Dataset(args.manifest, train_scenes)
-        val_ds = NPZLISS4Dataset(args.manifest, val_scenes)
+            manifest = os.path.abspath(args.manifest)
+            train_ds = NPZLISS4Dataset(manifest, train_scenes)
+            val_ds = NPZLISS4Dataset(manifest, val_scenes)
+            train_source = sorted(train_scenes)
+            val_source = sorted(val_scenes)
+        else:
+            manifest = os.path.abspath(args.manifest)
+            manifest_dir = os.path.dirname(manifest)
+            train_manifest = os.path.join(manifest_dir, "train_manifest.csv")
+            val_manifest = os.path.join(manifest_dir, "val_manifest.csv")
+            missing = [p for p in (train_manifest, val_manifest) if not os.path.isfile(p)]
+            if missing:
+                raise FileNotFoundError(
+                    "Default training needs sibling train_manifest.csv and "
+                    "val_manifest.csv files. Missing: " + ", ".join(missing)
+                )
+            train_ds = NPZLISS4Dataset(train_manifest, set())
+            val_ds = NPZLISS4Dataset(val_manifest, set())
+            train_source = train_manifest
+            val_source = val_manifest
 
     train_dl = DataLoader(
         train_ds,
@@ -136,10 +170,15 @@ def main():
 
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     loss_l1 = nn.L1Loss()
-    scaler = torch.amp.GradScaler(
-        "cuda",
-        enabled=device.type == "cuda",
-    )
+    try:
+        scaler = torch.amp.GradScaler(
+            "cuda",
+            enabled=device.type == "cuda",
+        )
+    except (AttributeError, TypeError):
+        # Keep compatibility with early PyTorch 2.x versions supported by
+        # requirements.txt, where the CUDA scaler lived under torch.cuda.amp.
+        scaler = torch.cuda.amp.GradScaler(enabled=device.type == "cuda")
 
     best = -float("inf")
     start_epoch = 1
@@ -160,13 +199,6 @@ def main():
         best = float(ckpt.get("best_val_psnr", best))
         start_epoch = int(ckpt.get("epoch", 0)) + 1
         print(f"Resuming from epoch {start_epoch}")
-
-    if args.train_manifest:
-        train_source = os.path.abspath(args.train_manifest)
-        val_source = os.path.abspath(args.val_manifest)
-    else:
-        train_source = [os.path.abspath(p) for p in (args.train_scene or [])]
-        val_source = [os.path.abspath(p) for p in (args.val_scene or [])]
 
     for epoch in range(start_epoch, args.epochs + 1):
         model.train()

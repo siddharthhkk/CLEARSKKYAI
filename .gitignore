@@ -7,9 +7,11 @@ __pycache__/
 data/raw/**
 data/eval/**
 data/synthetic_pretrain/**
+data/synthetic_pretrain_clear/**
 data/synthetic_pretrain_prod/**
 data/synthetic_pretrain_v2/**
 data/synthetic_pretrain_v3r/**
+data/synthetic_pretrain_v3r_from_guwahati/**
 
 # Local model checkpoints
 weights/*.pth

@@ -12,11 +12,11 @@ def main():
     )
     ap.add_argument(
         "--manifest",
-        default="data/synthetic_pretrain/manifest.csv",
+        default="data/synthetic_pretrain_v3r/manifest.csv",
     )
     ap.add_argument(
         "--samples-dir",
-        default="data/synthetic_pretrain",
+        default="data/synthetic_pretrain_v3r",
     )
     args = ap.parse_args()
 
