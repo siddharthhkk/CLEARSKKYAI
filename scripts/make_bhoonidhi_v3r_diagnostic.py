@@ -5,6 +5,8 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 import rasterio
+from rasterio.enums import Resampling
+from rasterio.windows import from_bounds
 
 
 def load_inventory(path):
@@ -30,34 +32,42 @@ def band_path(row, band):
     raise SystemExit(f"{band} not found for {row['scene_id']}")
 
 
-def read_scene(row):
+def read_overlap(row, bounds, size):
     out = []
+
     for band in ("BAND2", "BAND3", "BAND4"):
         with rasterio.open(band_path(row, band)) as src:
-            out.append(src.read(1).astype(np.float32))
+            win = from_bounds(*bounds, transform=src.transform)
+
+            h = min(size, max(1, int(round(win.height))))
+            w = min(size, max(1, int(round(win.width))))
+
+            out.append(
+                src.read(
+                    1,
+                    window=win,
+                    out_shape=(h, w),
+                    resampling=Resampling.bilinear,
+                ).astype(np.float32)
+            )
+
     return np.stack(out, axis=0)
 
 
-def read_prediction(path):
+def read_prediction(path, size):
     with rasterio.open(path) as src:
-        x = src.read().astype(np.float32)
+        h = min(size, src.height)
+        w = min(size, src.width)
+
+        x = src.read(
+            out_shape=(src.count, h, w),
+            resampling=Resampling.bilinear,
+        ).astype(np.float32)
+
     if x.shape[0] != 3:
         raise SystemExit(f"Prediction must have 3 bands, got {x.shape}")
+
     return x
-
-
-def crop_to_overlap(scene, row, bounds):
-    l, b, r, t = bounds
-    with rasterio.open(band_path(row, "BAND2")) as src:
-        x0, y0 = src.index(l, t)
-        x1, y1 = src.index(r, b)
-
-        x0 = max(0, min(src.width, x0))
-        x1 = max(0, min(src.width, x1))
-        y0 = max(0, min(src.height, y0))
-        y1 = max(0, min(src.height, y1))
-
-    return scene[:, min(y0, y1):max(y0, y1), min(x0, x1):max(x0, x1)]
 
 
 def stretch(x, lo=2, hi=98):
@@ -98,6 +108,12 @@ def main():
         default="data/raw/bhoonidhi_liss4/scene_inventory.csv",
     )
     ap.add_argument(
+        "--size",
+        type=int,
+        default=1200,
+        help="Maximum preview dimension; keeps RAM usage low (default: 1200).",
+    )
+    ap.add_argument(
         "--out",
         default="previews/bhoonidhi_v3r_diagnostic.png",
     )
@@ -112,22 +128,24 @@ def main():
     clear_row = find_scene(rows, args.clear_scene)
 
     with rasterio.open(args.prediction) as pred_src:
-        pred = pred_src.read().astype(np.float32)
         bounds = pred_src.bounds
 
-    cloudy_full = read_scene(cloudy_row)
-    clear_full = read_scene(clear_row)
+    # IMPORTANT: this script is only a visualization diagnostic. Read a
+    # small downsampled view of the common footprint instead of loading the
+    # ~283 million-pixel scenes into RAM.
+    size = args.size
 
-    cloudy = crop_to_overlap(
-        cloudy_full,
+    cloudy = read_overlap(
         cloudy_row,
         (bounds.left, bounds.bottom, bounds.right, bounds.top),
+        size,
     )
-    clear = crop_to_overlap(
-        clear_full,
+    clear = read_overlap(
         clear_row,
         (bounds.left, bounds.bottom, bounds.right, bounds.top),
+        size,
     )
+    pred = read_prediction(args.prediction, size)
 
     h = min(pred.shape[1], cloudy.shape[1], clear.shape[1])
     w = min(pred.shape[2], cloudy.shape[2], clear.shape[2])
@@ -189,7 +207,7 @@ def main():
     print(f"Cloudy : {cloudy_row['scene_id']}")
     print(f"Clear  : {clear_row['scene_id']}")
     print(f"Output : {out}")
-    print(f"Shape  : {w} x {h}")
+    print(f"Shape  : {w} x {h} (downsampled preview)")
     print(
         "Difference panel: warm/positive means V3R reduced absolute "
         "error relative to the cloudy input; cool/negative means it increased it."
