@@ -17,7 +17,7 @@ PATH_ROW_RE = re.compile(r"(?<!\d)(\d{3})[_-](\d{2})(?!\d)", re.IGNORECASE)
 # Bhoonidhi/ISRO product folder names seen in this batch contain:
 #   ...<3-digit path><4-digit row>SSANSTUC00GT...
 FOLDER_PATH_ROW_RE = re.compile(
-    r"(?<!\d)(\d{3})(\d{4})SSANSTUC00GT",
+    r"(\d{3})(\d{5})SSANSTUC00GT",
     re.IGNORECASE,
 )
 SCENE_RE = re.compile(r"(\d{6}[_-]\d{3}[_-]\d{2})", re.IGNORECASE)
@@ -79,9 +79,9 @@ def parse_scene_id(text):
 
 
 def parse_folder_metadata(folder_name):
-    # The folder itself is the product identifier in the user's extracted
-    # Bhoonidhi batch. This fallback is important because some downloads
-    # contain only BAND*.tif files and no parseable XML/TXT metadata.
+    # Bhoonidhi product folders in this batch encode the acquisition date
+    # and a zero-padded path/row near the end of the product ID. Example:
+    # ...011000053SSANSTUC... -> path 110, row 53
     date = parse_date(folder_name)
     path_no, row_no = parse_path_row(folder_name)
 
@@ -91,7 +91,7 @@ def parse_folder_metadata(folder_name):
         "row": row_no,
         "scene_id": folder_name,
         "satellite": "ResourceSat-2" if folder_name.upper().startswith("R2F") else "",
-        "sensor": "LISS4" if "LISS4" in folder_name.upper() or "LIS4" in folder_name.upper() else "",
+        "sensor": "",
         "product_hint": folder_name[:4] if len(folder_name) >= 4 else "",
     }
 
@@ -366,6 +366,14 @@ def main():
                     meta["path"] = p
                     meta["row"] = r
                     break
+
+        if not meta["sensor"]:
+            # These downloads came from the LISS-IV search collection, and
+            # BAND2/BAND3/BAND4 are the expected LISS-IV raster bands.
+            if {"BAND2", "BAND3", "BAND4"}.issubset(set(bands)):
+                meta["sensor"] = "LISS4"
+            elif bands:
+                meta["sensor"] = "LISS4? (partial bands)"
 
         ti = tifs[0]
 
