@@ -18,16 +18,31 @@ from liss4_dsen2cr import LISS4DSen2CR
 
 def make_weight(h, w):
     """
-    Smooth center-weighted window for overlap blending.
-    Keep a small nonzero floor so scene borders remain covered.
-    """
-    y = np.linspace(0.0, 1.0, h, dtype=np.float32)
-    x = np.linspace(0.0, 1.0, w, dtype=np.float32)
+    Smooth positive center-weighted window for overlap blending.
 
-    wy = 0.15 + 0.85 * np.sin(np.pi * y) ** 0.5
-    wx = 0.15 + 0.85 * np.sin(np.pi * x) ** 0.5
+    Clip the sine argument before sqrt because floating-point evaluation of
+    sin(pi) can produce a tiny negative number at the last pixel.
+    """
+    y = np.clip(np.sin(np.pi * np.linspace(0.0, 1.0, h, dtype=np.float32)), 0.0, 1.0)
+    x = np.clip(np.sin(np.pi * np.linspace(0.0, 1.0, w, dtype=np.float32)), 0.0, 1.0)
+
+    wy = 0.15 + 0.85 * np.sqrt(y)
+    wx = 0.15 + 0.85 * np.sqrt(x)
 
     return (wy[:, None] * wx[None, :]).astype(np.float32)
+
+
+def tile_starts(length, tile, stride):
+    """Return starts that cover the entire axis, including the far edge."""
+    if length <= tile:
+        return [0]
+
+    starts = list(range(0, length - tile + 1, stride))
+    last = length - tile
+    if starts[-1] != last:
+        starts.append(last)
+
+    return starts
 
 
 def main():
@@ -79,12 +94,16 @@ def main():
         x_full = src.read().astype(np.float32)
         profile = src.profile.copy()
 
-    # Accumulate overlapping predictions and normalize by total weights.
+    rs = tile_starts(h, args.tile, stride)
+    cs = tile_starts(w, args.tile, stride)
+
     accum = np.zeros_like(x_full, dtype=np.float32)
     weights = np.zeros((h, w), dtype=np.float32)
 
-    for row in range(0, h, stride):
-        for col in range(0, w, stride):
+    tile_count = 0
+
+    for row in rs:
+        for col in cs:
             row2 = min(row + args.tile, h)
             col2 = min(col + args.tile, w)
 
@@ -109,25 +128,24 @@ def main():
             with torch.no_grad():
                 y = torch.clamp(model(xt), 0.0, 1.0)
 
-            pred = (
-                y[0]
-                .detach()
-                .cpu()
-                .numpy()[:, :hh, :ww]
-            )
-
+            pred = y[0].detach().cpu().numpy()[:, :hh, :ww]
             wt = make_weight(hh, ww)
 
             accum[:, row:row2, col:col2] += pred * wt[None]
             weights[row:row2, col:col2] += wt
 
-            # Stop once the current tile reaches both lower/right edges.
-            if row2 == h and col2 == w:
-                break
-        if row2 == h:
-            break
+            tile_count += 1
 
-    out = accum / np.maximum(weights[None], 1e-6)
+    if not np.all(weights > 0):
+        raise RuntimeError(
+            "Overlap blending left uncovered pixels. Check tile/overlap settings."
+        )
+
+    out = accum / weights[None]
+
+    if not np.isfinite(out).all():
+        raise RuntimeError("Non-finite values detected in blended output.")
+
     out_dn = np.clip(
         np.rint(out * args.dn_max),
         0,
@@ -155,6 +173,7 @@ def main():
     print(f"Size       : {w} x {h}")
     print(f"Tile       : {args.tile} px")
     print(f"Overlap    : {args.overlap} px")
+    print(f"Tiles      : {tile_count} ({len(rs)} rows x {len(cs)} cols)")
     print()
     print(
         "No clear reference was used. Overlap blending reduces tile-boundary "
