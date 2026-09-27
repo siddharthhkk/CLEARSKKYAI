@@ -3,9 +3,9 @@ import csv
 import itertools
 import os
 
-import rasterio.warp
-from pyproj import CRS
-from shapely.geometry import box
+import rasterio
+from rasterio.crs import CRS
+from rasterio.warp import transform_bounds
 
 
 def fnum(x):
@@ -32,11 +32,8 @@ def row_bounds(r):
 
 def scene_geom_in_common_crs(a, b):
     """
-    Return both scene rectangles transformed into a common CRS.
-
-    We use the first scene's CRS when it is projected/metres. If the CRSs
-    differ, bounds from the second scene are transformed into the first
-    scene's CRS before calculating overlap.
+    Return both scene rectangles as (left, bottom, right, top) in a
+    common CRS. The first scene's CRS is used as the common CRS.
     """
     ca = (a.get("crs") or "").strip()
     cb = (b.get("crs") or "").strip()
@@ -48,22 +45,41 @@ def scene_geom_in_common_crs(a, b):
         return None
 
     try:
-        cra = CRS.from_user_input(ca)
-        crb = CRS.from_user_input(cb)
+        cra = CRS.from_string(ca)
+        crb = CRS.from_string(cb)
     except Exception:
         return None
 
-    # Scene A stays in its own CRS.
     if cra == crb:
-        return box(*ba), box(*bb), cra
+        return ba, bb, cra
 
     try:
-        bb2 = rasterio.warp.transform_bounds(
-            crb, cra, *bb, densify_pts=21
+        bb2 = transform_bounds(
+            crb,
+            cra,
+            *bb,
+            densify_pts=21,
         )
-        return box(*ba), box(*bb2), cra
+        return ba, bb2, cra
     except Exception:
         return None
+
+
+def rect_area(b):
+    l, btm, r, t = b
+    return max(0.0, r - l) * max(0.0, t - btm)
+
+
+def intersection_area(a, b):
+    l = max(a[0], b[0])
+    btm = max(a[1], b[1])
+    r = min(a[2], b[2])
+    t = min(a[3], b[3])
+
+    if r <= l or t <= btm:
+        return 0.0
+
+    return (r - l) * (t - btm)
 
 
 def load_rows(path):
@@ -122,16 +138,10 @@ def main():
         if pair is None:
             continue
 
-        ga, gb, crs = pair
-        inter = ga.intersection(gb)
-
-        if inter.is_empty or inter.area <= 0:
-            overlap_area = 0.0
-        else:
-            overlap_area = inter.area
-
-        area_a = ga.area
-        area_b = gb.area
+        ba, bb, crs = pair
+        overlap_area = intersection_area(ba, bb)
+        area_a = rect_area(ba)
+        area_b = rect_area(bb)
 
         if area_a <= 0 or area_b <= 0:
             continue
@@ -142,7 +152,7 @@ def main():
         smaller = min(area_a, area_b)
         overlap_small = overlap_area / smaller if smaller > 0 else 0.0
 
-        union = ga.union(gb).area
+        union = area_a + area_b - overlap_area
         iou = overlap_area / union if union > 0 else 0.0
 
         if not args.all and overlap_small < args.min_overlap:
