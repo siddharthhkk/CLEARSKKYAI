@@ -2,7 +2,7 @@
 
 ClearSky-AI is a research prototype for generative cloud removal and reconstruction of native LISS-IV satellite imagery, developed for the 2026 Bharatiya Antariksh Hackathon problem.
 
-The repository is now focused on the native LISS-IV pipeline. The earlier Sentinel-2/U-Net prototype and superseded experiment scripts have been removed from the active tree.
+The repository is now focused on the native LISS-IV pipeline. Superseded Sentinel-2/U-Net experiments and exploratory gating/V2/V3 variants have been removed from the active tree.
 
 ## Active model
 
@@ -26,7 +26,7 @@ Core files:
 
 ## V3R synthetic pretraining
 
-V3R was created after measuring the corruption distribution of a real Guwahati LISS-IV cloudy/clear pair.
+V3R was created after measuring the corruption distribution of a real Guwahati LISS-IV cloudy/clear temporal pair.
 
 Earlier synthetic V2 corruption was much too strong. V3R keeps the multi-scale cloud geometry but reduces cloud radiance, opacity, shadow strength, and noise so the synthetic corruption magnitude is closer to the observed real-scene distribution.
 
@@ -39,6 +39,12 @@ Training:
     scripts/train_liss4_synthetic.py
 
 V3R synthetic validation reached 34.50 dB PSNR.
+
+The local V3R source patches live in:
+
+    data/synthetic_pretrain_prod/
+
+This directory is local/ignored because it contains generated NPZ data, but it is still the source dataset required to reproduce the V3R synthetic set.
 
 ## Real validation
 
@@ -61,21 +67,25 @@ This is a temporal reference rather than simultaneous ground truth, so the metri
 
 ### Bhoonidhi / Resourcesat
 
-The local Bhoonidhi workflow found a strong overlapping Path/Row 110/54 pair:
+A Bhoonidhi search produced several complete LISS-IV acquisitions for Path/Row 110/54.
+
+The current complete scenes include:
 
     01-Jun-2020  RS2
+    08-Jun-2020  RS2A
+    12-Aug-2020  RS2
     01-Nov-2023  RS2
 
-The two scenes cover about 95% of each other's footprint. The June acquisition is heavily clouded while the November acquisition is visually much clearer.
+The 01-Jun-2020 acquisition is visibly/cloud-statistically cloud-heavy. The 08-Jun-2020 and 12-Aug-2020 acquisitions are even more cloud-heavy according to the current heuristic cloudiness diagnostic, while 01-Nov-2023 is very clear.
 
-V3R on the common footprint produced:
+A 01-Jun-2020 → 01-Nov-2023 temporal pair has about 95% footprint overlap. V3R on the common footprint produced:
 
     Cloudy: MAE 0.28845 | RMSE 0.37218 | PSNR 8.585 dB | SSIM 0.38228 | SAM 24.8345°
     V3R:    MAE 0.29977 | RMSE 0.40665 | PSNR 7.816 dB | SSIM 0.38970 | SAM 25.1617°
 
-This is recorded as a stress test rather than a clean benchmark because the acquisitions are more than three years apart and have substantial radiometric and surface differences.
+This pair is recorded as a stress test rather than a clean benchmark. The acquisitions are more than three years apart and have large radiometric/surface differences. The result shows that the current V3R model is too conservative for this severe real-cloud case.
 
-The next validation target is a cloudy 110/54 acquisition much closer in time to the 01-Nov-2023 clear observation.
+The next target is a cloudy 110/54 acquisition close in time to the clear 01-Nov-2023 acquisition.
 
 ## Bhoonidhi workflow
 
@@ -97,7 +107,7 @@ Find overlapping footprints:
 
     python scripts/find_bhoonidhi_liss4_pairs.py
 
-Compare the current 110/54 acquisitions:
+Compare all current 110/54 scenes:
 
     python scripts/compare_bhoonidhi_11054_cloudiness.py
 
@@ -112,6 +122,8 @@ Run V3R on a real pair:
 Create the visual diagnostic:
 
     python scripts/make_bhoonidhi_v3r_diagnostic.py <cloudy_scene_id> <clear_scene_id>
+
+The cloudiness scripts are heuristic diagnostics only. They are useful for screening candidates, not for claiming a ground-truth cloud percentage.
 
 ## Synthetic-data workflow
 
@@ -153,11 +165,27 @@ Inspect a new product before using it:
 
     python scripts/inspect_liss4.py path/to/product.tif
 
-## Important validation lesson
+## Important validation lessons
+
+### Do not trust a public sample blindly
 
 A public Chennai cloudy sample was previously tested and found to contain a strong periodic 128-pixel checkerboard artifact already present in the source TIFF. It is therefore not used as validation evidence.
 
-The project now prioritizes real products with verified metadata, complete bands, and measurable geographic overlap.
+### Temporal pairs are not ground truth
+
+A cloudy acquisition and a clear acquisition from different dates can contain:
+
+    illumination differences
+    seasonal changes
+    land-cover changes
+    geometric/registration differences
+    radiometric differences
+
+Metrics from such pairs should therefore be reported as temporal-reference results, not as exact pixel-level ground truth.
+
+### Dataset domain matters
+
+V2 synthetic clouds were substantially stronger than the measured real-scene corruption distribution. V3R reduced the synthetic corruption amplitude and produced a large improvement on the Guwahati real pair, but the difficult Bhoonidhi stress test shows that the current model does not yet generalize to every real cloud regime.
 
 ## External DSen2-CR reference
 
@@ -204,9 +232,10 @@ The current LISS-IV pipeline needs PyTorch, NumPy, Rasterio and Matplotlib. h5py
 - Current real references are temporal rather than simultaneous.
 - Full-scene inference must be tiled and can take substantial time.
 - The active V3R experiments do not yet use SAR.
+- Heuristic cloudiness screening is not a substitute for a native cloud mask.
 
 ## Next step
 
-Find a near-date cloudy 110/54 Bhoonidhi acquisition around the clear 01-Nov-2023 observation, then use it as the next independent temporal validation case.
+Find a cloudy 110/54 Bhoonidhi acquisition near the clear 01-Nov-2023 observation, then evaluate V3R on that closer temporal pair.
 
 The longer-term target is a larger multi-AOI real-cloud LISS-IV benchmark with native cloud masks and closely matched temporal observations.
