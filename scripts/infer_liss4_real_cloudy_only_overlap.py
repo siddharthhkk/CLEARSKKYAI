@@ -1,10 +1,14 @@
 import argparse
+from contextlib import ExitStack
+import math
 import os
 import sys
+import tempfile
 
 import numpy as np
 import rasterio
 import torch
+from rasterio.windows import Window
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
@@ -15,14 +19,88 @@ if SRC_DIR not in sys.path:
 from liss4 import normalize_liss4
 from liss4_dsen2cr import LISS4DSen2CR
 
+READ_ONLY_TAG_NAMESPACES = {"IMAGE_STRUCTURE", "DERIVED_SUBDATASETS"}
+
+
+def namespaced_tags(dataset, band_index=0):
+    """Return writable non-default metadata domains and their tags."""
+    result = {}
+    for namespace in dataset.tag_namespaces(band_index):
+        if namespace in READ_ONLY_TAG_NAMESPACES:
+            continue
+        tags = dataset.tags(band_index, ns=namespace)
+        if tags:
+            result[namespace] = tags
+    return result
+
+
+class ThreeBandStack:
+    """Windowed view over separate single-band [Green, Red, NIR] rasters."""
+
+    def __init__(self, datasets, paths):
+        if len(datasets) != 3:
+            raise ValueError("Exactly three single-band input files are required.")
+        reference = datasets[0]
+        for index, (name, dataset) in enumerate(
+            zip(("BAND2/Green", "BAND3/Red", "BAND4/NIR"), datasets)
+        ):
+            if dataset.count != 1:
+                raise ValueError(f"{name} input must contain exactly one band.")
+            same_shape = (dataset.height, dataset.width) == (
+                reference.height,
+                reference.width,
+            )
+            same_grid = (
+                dataset.crs == reference.crs
+                and dataset.transform == reference.transform
+                and np.allclose(dataset.res, reference.res, atol=1e-6)
+            )
+            if not same_shape or not same_grid:
+                raise ValueError(
+                    f"Separate LISS-IV bands must share an identical grid; "
+                    f"misaligned input: {name} ({paths[index]})"
+                )
+
+        self.datasets = datasets
+        self.width = reference.width
+        self.height = reference.height
+        self.count = 3
+        self.name = ", ".join(paths)
+        self.profile = reference.profile.copy()
+        self.profile.update(count=3)
+        self.descriptions = ("Green", "Red", "NIR")
+        self.units = tuple(dataset.units[0] for dataset in datasets)
+
+    def read(self, indexes, window):
+        bands = [
+            self.datasets[int(index) - 1].read(1, window=window)
+            for index in indexes
+        ]
+        return np.stack(bands, axis=0)
+
+    def tags(self, band_index=None, ns=None):
+        if band_index is None:
+            return {} if ns is None else self.datasets[0].tags(ns=ns)
+        dataset = self.datasets[band_index - 1]
+        if ns is None:
+            return dataset.tags(1)
+        tags = dataset.tags(ns=ns)
+        tags.update(dataset.tags(1, ns=ns))
+        return tags
+
+    def tag_namespaces(self, band_index=0):
+        if band_index == 0:
+            return self.datasets[0].tag_namespaces()
+        dataset = self.datasets[band_index - 1]
+        namespaces = dataset.tag_namespaces()
+        for namespace in dataset.tag_namespaces(1):
+            if namespace not in namespaces:
+                namespaces.append(namespace)
+        return namespaces
+
 
 def make_weight(h, w):
-    """
-    Smooth positive center-weighted window for overlap blending.
-
-    Clip the sine argument before sqrt because floating-point evaluation of
-    sin(pi) can produce a tiny negative number at the last pixel.
-    """
+    """Smooth positive center-weighted window for overlap blending."""
     y = np.clip(np.sin(np.pi * np.linspace(0.0, 1.0, h, dtype=np.float32)), 0.0, 1.0)
     x = np.clip(np.sin(np.pi * np.linspace(0.0, 1.0, w, dtype=np.float32)), 0.0, 1.0)
 
@@ -45,15 +123,140 @@ def tile_starts(length, tile, stride):
     return starts
 
 
+def select_device(name):
+    if name == "auto":
+        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if name == "cuda" and not torch.cuda.is_available():
+        raise ValueError("--device cuda was requested, but CUDA is unavailable.")
+    return torch.device(name)
+
+
+def load_model(checkpoint_path, device):
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+    if not isinstance(checkpoint, dict) or "model_state_dict" not in checkpoint:
+        raise ValueError(
+            f"Checkpoint must contain a 'model_state_dict': {checkpoint_path}"
+        )
+
+    model = LISS4DSen2CR(
+        features=int(checkpoint.get("features", 256)),
+        blocks=int(checkpoint.get("blocks", 16)),
+        res_scale=0.1,
+        use_sar=False,
+    ).to(device)
+    model.load_state_dict(checkpoint["model_state_dict"])
+    model.eval()
+    return model, checkpoint
+
+
+def infer_to_dataset(src, dst, model, device, dn_max, tile, overlap):
+    """Infer by tile rows so full-scene float arrays are never held in memory."""
+    if src.count != 3:
+        raise ValueError(f"Expected 3-band LISS-IV GeoTIFF, got {src.count} bands.")
+    if src.width < 1 or src.height < 1:
+        raise ValueError(f"Input GeoTIFF is empty: {src.name}")
+
+    stride = tile - overlap
+    row_starts = tile_starts(src.height, tile, stride)
+    col_starts = tile_starts(src.width, tile, stride)
+    accum = None
+    weights = None
+    buffer_start = row_starts[0]
+    tile_count = 0
+
+    for row_index, row in enumerate(row_starts):
+        row_end = min(row + tile, src.height)
+
+        if accum is None:
+            buffer_start = row
+            accum = np.zeros((3, row_end - buffer_start, src.width), dtype=np.float32)
+            weights = np.zeros((row_end - buffer_start, src.width), dtype=np.float32)
+        else:
+            current_end = buffer_start + weights.shape[0]
+            if current_end < row_end:
+                extra = row_end - current_end
+                accum = np.concatenate(
+                    [accum, np.zeros((3, extra, src.width), dtype=np.float32)], axis=1
+                )
+                weights = np.concatenate(
+                    [weights, np.zeros((extra, src.width), dtype=np.float32)], axis=0
+                )
+
+        for col in col_starts:
+            row2 = min(row + tile, src.height)
+            col2 = min(col + tile, src.width)
+            hh = row2 - row
+            ww = col2 - col
+
+            x = src.read(
+                indexes=(1, 2, 3),
+                window=Window(col, row, ww, hh),
+            ).astype(np.float32, copy=False)
+            if hh != tile or ww != tile:
+                x = np.pad(
+                    x,
+                    ((0, 0), (0, tile - hh), (0, tile - ww)),
+                    mode="edge",
+                )
+
+            xt = normalize_liss4(x, dn_max)[None].to(device, non_blocking=True)
+            with torch.inference_mode():
+                prediction = torch.clamp(model(xt), 0.0, 1.0)
+
+            pred = prediction[0].cpu().numpy()[:, :hh, :ww]
+            weight = make_weight(hh, ww)
+            top = row - buffer_start
+            bottom = top + hh
+            accum[:, top:bottom, col:col2] += pred * weight[None]
+            weights[top:bottom, col:col2] += weight
+            tile_count += 1
+
+        flush_end = (
+            row_starts[row_index + 1]
+            if row_index + 1 < len(row_starts)
+            else src.height
+        )
+        flush_count = flush_end - buffer_start
+        if flush_count <= 0 or flush_count > weights.shape[0]:
+            raise RuntimeError("Internal tile-row buffer does not cover the flush range.")
+        active_weights = weights[:flush_count]
+        if not np.all(active_weights > 0):
+            raise RuntimeError(
+                "Overlap blending left uncovered pixels. Check tile/overlap settings."
+            )
+
+        out = accum[:, :flush_count] / active_weights[None]
+        if not np.isfinite(out).all():
+            raise RuntimeError("Non-finite values detected in blended output.")
+
+        out_dn = np.clip(np.rint(out * dn_max), 0, dn_max).astype(np.uint16)
+        dst.write(out_dn, window=Window(0, buffer_start, src.width, flush_count))
+
+        accum = accum[:, flush_count:]
+        weights = weights[flush_count:]
+        buffer_start = flush_end
+
+    if buffer_start != src.height:
+        raise RuntimeError("Inference ended before all output rows were written.")
+    return tile_count, len(row_starts), len(col_starts)
+
+
 def main():
     ap = argparse.ArgumentParser(
-        description="Cloudy-only LISS-IV inference with overlapping tile blending."
+        description="Cloudy-only LISS-IV inference with overlap-tiled GeoTIFF output."
     )
     ap.add_argument(
         "--checkpoint",
         default="weights/liss4_dsen2cr_synthetic_v3r.pth",
     )
-    ap.add_argument("--cloudy", required=True)
+    input_group = ap.add_mutually_exclusive_group(required=True)
+    input_group.add_argument("--cloudy", help="Stacked three-band [G,R,NIR] GeoTIFF.")
+    input_group.add_argument(
+        "--cloudy-bands",
+        nargs=3,
+        metavar=("BAND2_GREEN", "BAND3_RED", "BAND4_NIR"),
+        help="Three co-registered single-band files in [Green, Red, NIR] order.",
+    )
     ap.add_argument("--output", required=True)
     ap.add_argument("--dn-max", type=float, default=1023.0)
     ap.add_argument("--tile", type=int, default=256)
@@ -63,117 +266,127 @@ def main():
         default=64,
         help="Overlap between neighboring tiles in pixels.",
     )
+    ap.add_argument(
+        "--device",
+        choices=("auto", "cpu", "cuda"),
+        default="auto",
+        help="Inference device; auto selects CUDA when available (default).",
+    )
     args = ap.parse_args()
 
     if args.tile <= 0:
         raise ValueError("--tile must be positive.")
     if not 0 <= args.overlap < args.tile:
         raise ValueError("--overlap must satisfy 0 <= overlap < tile.")
+    if not math.isfinite(args.dn_max) or args.dn_max <= 0:
+        raise ValueError("--dn-max must be finite and positive.")
+    if args.dn_max > np.iinfo(np.uint16).max:
+        raise ValueError("--dn-max must fit the uint16 output range (<= 65535).")
 
-    stride = args.tile - args.overlap
+    input_paths = [
+        os.path.abspath(path)
+        for path in ([args.cloudy] if args.cloudy else args.cloudy_bands)
+    ]
+    if args.cloudy_bands and len({os.path.normcase(p) for p in input_paths}) != 3:
+        raise ValueError("--cloudy-bands must refer to three distinct files.")
+    input_label = ", ".join(input_paths)
+    output_path = os.path.abspath(args.output)
+    if any(os.path.normcase(path) == os.path.normcase(output_path) for path in input_paths):
+        raise ValueError("--output must not overwrite any cloudy input GeoTIFF.")
+    if os.path.isdir(output_path):
+        raise ValueError("--output must name a file, not a directory.")
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
-
-    model = LISS4DSen2CR(
-        features=int(ckpt.get("features", 256)),
-        blocks=int(ckpt.get("blocks", 16)),
-        res_scale=0.1,
-        use_sar=False,
-    ).to(device)
-    model.load_state_dict(ckpt["model_state_dict"])
-    model.eval()
-
-    with rasterio.open(args.cloudy) as src:
-        if src.count != 3:
-            raise ValueError(
-                f"Expected 3-band LISS-IV GeoTIFF, got {src.count} bands."
-            )
-
-        h, w = src.height, src.width
-        x_full = src.read().astype(np.float32)
-        profile = src.profile.copy()
-
-    rs = tile_starts(h, args.tile, stride)
-    cs = tile_starts(w, args.tile, stride)
-
-    accum = np.zeros_like(x_full, dtype=np.float32)
-    weights = np.zeros((h, w), dtype=np.float32)
-
-    tile_count = 0
-
-    for row in rs:
-        for col in cs:
-            row2 = min(row + args.tile, h)
-            col2 = min(col + args.tile, w)
-
-            hh = row2 - row
-            ww = col2 - col
-            x = x_full[:, row:row2, col:col2]
-
-            if hh != args.tile or ww != args.tile:
-                py = args.tile - hh
-                px = args.tile - ww
-                x = np.pad(
-                    x,
-                    ((0, 0), (0, py), (0, px)),
-                    mode="edge",
-                )
-
-            xt = normalize_liss4(x, args.dn_max)[None].to(
-                device,
-                non_blocking=True,
-            )
-
-            with torch.no_grad():
-                y = torch.clamp(model(xt), 0.0, 1.0)
-
-            pred = y[0].detach().cpu().numpy()[:, :hh, :ww]
-            wt = make_weight(hh, ww)
-
-            accum[:, row:row2, col:col2] += pred * wt[None]
-            weights[row:row2, col:col2] += wt
-
-            tile_count += 1
-
-    if not np.all(weights > 0):
-        raise RuntimeError(
-            "Overlap blending left uncovered pixels. Check tile/overlap settings."
-        )
-
-    out = accum / weights[None]
-
-    if not np.isfinite(out).all():
-        raise RuntimeError("Non-finite values detected in blended output.")
-
-    out_dn = np.clip(
-        np.rint(out * args.dn_max),
-        0,
-        args.dn_max,
-    ).astype(np.uint16)
-
-    os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
-
-    profile.update(
-        dtype="uint16",
-        count=3,
-        compress="deflate",
+    device = select_device(args.device)
+    model, checkpoint = load_model(args.checkpoint, device)
+    output_dir = os.path.dirname(output_path)
+    os.makedirs(output_dir, exist_ok=True)
+    temp_fd, temp_path = tempfile.mkstemp(
+        prefix=".clearsky-inference-",
+        suffix=".tif",
+        dir=output_dir,
     )
+    os.close(temp_fd)
 
-    with rasterio.open(args.output, "w", **profile) as dst:
-        dst.write(out_dn)
+    try:
+        with ExitStack() as input_stack:
+            if args.cloudy:
+                src = input_stack.enter_context(rasterio.open(input_paths[0]))
+            else:
+                band_datasets = [
+                    input_stack.enter_context(rasterio.open(path))
+                    for path in input_paths
+                ]
+                src = ThreeBandStack(band_datasets, input_paths)
+
+            if src.count != 3:
+                raise ValueError(
+                    f"Expected 3-band LISS-IV GeoTIFF, got {src.count} bands."
+                )
+            if src.width < 1 or src.height < 1:
+                raise ValueError(f"Input GeoTIFF is empty: {src.name}")
+
+            profile = src.profile.copy()
+            descriptions = src.descriptions
+            units = src.units
+            dataset_tags = src.tags()
+            band_tags = [src.tags(i) for i in range(1, 4)]
+            dataset_namespaced_tags = namespaced_tags(src)
+            band_namespaced_tags = [
+                namespaced_tags(src, i) for i in range(1, 4)
+            ]
+            profile.update(
+                driver="GTiff",
+                dtype="uint16",
+                count=3,
+                compress="deflate",
+                predictor=2,
+                BIGTIFF="IF_SAFER",
+            )
+
+            with rasterio.open(temp_path, "w", **profile) as dst:
+                tile_count, row_count, col_count = infer_to_dataset(
+                    src=src,
+                    dst=dst,
+                    model=model,
+                    device=device,
+                    dn_max=args.dn_max,
+                    tile=args.tile,
+                    overlap=args.overlap,
+                )
+                dst.update_tags(**dataset_tags)
+                for namespace, tags in dataset_namespaced_tags.items():
+                    dst.update_tags(ns=namespace, **tags)
+                for band_index in range(1, 4):
+                    if descriptions[band_index - 1]:
+                        dst.set_band_description(band_index, descriptions[band_index - 1])
+                    if units[band_index - 1]:
+                        dst.set_band_unit(band_index, units[band_index - 1])
+                    if band_tags[band_index - 1]:
+                        dst.update_tags(band_index, **band_tags[band_index - 1])
+                    for namespace, tags in band_namespaced_tags[band_index - 1].items():
+                        dst.update_tags(band_index, ns=namespace, **tags)
+
+            width, height = src.width, src.height
+
+        os.replace(temp_path, output_path)
+    except Exception:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        raise
 
     print("=== REAL LISS-IV OVERLAP-TILED INFERENCE ===")
     print(f"Device     : {device}")
     if device.type == "cuda":
-        print(f"GPU        : {torch.cuda.get_device_name(0)}")
+        print(f"GPU        : {torch.cuda.get_device_name(device)}")
     print(f"Checkpoint : {os.path.abspath(args.checkpoint)}")
-    print(f"Input      : {os.path.abspath(args.cloudy)}")
-    print(f"Output     : {os.path.abspath(args.output)}")
-    print(f"Size       : {w} x {h}")
+    if "epoch" in checkpoint:
+        print(f"Epoch      : {checkpoint['epoch']}")
+    print(f"Input      : {input_label}")
+    print(f"Output     : {output_path}")
+    print(f"Size       : {width} x {height}")
     print(f"Tile       : {args.tile} px")
     print(f"Overlap    : {args.overlap} px")
-    print(f"Tiles      : {tile_count} ({len(rs)} rows x {len(cs)} cols)")
+    print(f"Tiles      : {tile_count} ({row_count} rows x {col_count} cols)")
     print()
     print(
         "No clear reference was used. Overlap blending reduces tile-boundary "

@@ -1,241 +1,166 @@
-# ClearSky-AI
+# ClearSky-AI: LISS-IV cloud removal
 
-ClearSky-AI is a research prototype for generative cloud removal and reconstruction of native LISS-IV satellite imagery, developed for the 2026 Bharatiya Antariksh Hackathon problem.
+ClearSky-AI is a personal research prototype for reconstructing cloud-affected native LISS-IV imagery. It is motivated by the ISRO hackathon problem, but is being developed as a practical personal tool rather than a strict competition submission.
 
-The repository is now focused on the native LISS-IV pipeline. Superseded Sentinel-2/U-Net experiments and exploratory gating/V2/V3 variants have been removed from the active tree.
+The repository keeps the established optical-only DSen2-CR-style V3R model as its baseline. Bhoonidhi is optional: the inference, data-preparation, training, and smoke-test workflows do not require Bhoonidhi products.
 
-## Active model
+## Current model and evidence
 
-The current primary model is a DSen2-CR-style residual network adapted to LISS-IV.
+The active model is a DSen2-CR-style residual CNN with:
 
-    Input:  [G, R, NIR]
-    DN:    0–1023
-    Width: 256 features
-    Blocks: 16 residual blocks
-    Residual scale: 0.1
-    Output: cloudy + predicted residual
+- Input bands: `[Green, Red, NIR]` (LISS-IV `BAND2`, `BAND3`, `BAND4`)
+- Expected native DN range: `0–1023`
+- 256 features, 16 residual blocks, residual scale 0.1
+- Optical-only inference; optional SAR support is not part of the active checkpoint
 
-The active experiments use optical-only LISS-IV. The model implementation keeps optional 2-channel SAR support for later work.
+The best local V3R checkpoint records epoch 16 and 34.501 dB synthetic validation PSNR. The generated V3R data has 512 patches from one clear source scene: 452 training patches, 51 spatially held-out validation patches, and 9 boundary patches discarded from the split.
 
-Core files:
+Fresh tiled inference with that checkpoint was checked against the local Guwahati temporal pair:
 
-    src/liss4.py
-    src/liss4_dsen2cr.py
-    src/liss4_dataset.py
-    src/liss4_patch_dataset.py
+| Input/output | MAE | RMSE | PSNR | SSIM | SAM |
+|---|---:|---:|---:|---:|---:|
+| Cloudy input | 0.016918 | 0.040084 | 27.941 dB | 0.94017 | 4.6183° |
+| V3R output | 0.009091 | 0.019073 | 34.392 dB | 0.96839 | 3.5060° |
 
-## V3R synthetic pretraining
+The observed PSNR difference is +6.451 dB for this pair. This is a temporal-reference result, not simultaneous cloud-free ground truth: illumination, registration, land-surface, and acquisition differences contribute to all metrics. It does not establish performance on arbitrary scenes or cloud types.
 
-V3R was created after measuring the corruption distribution of a real Guwahati LISS-IV cloudy/clear temporal pair.
+A separate Bhoonidhi stress test (01-Jun-2020 cloudy vs 01-Nov-2023 clear) scored 8.585 dB before and 7.816 dB after V3R. The acquisitions are more than three years apart, so this is not a clean benchmark; it does show that V3R can be too conservative under a difficult cloud regime. Bhoonidhi is useful for later testing, but is not needed to run the project.
 
-Earlier synthetic V2 corruption was much too strong. V3R keeps the multi-scale cloud geometry but reduces cloud radiance, opacity, shadow strength, and noise so the synthetic corruption magnitude is closer to the observed real-scene distribution.
+## Quick start
 
-Generator:
+Install the Python dependencies from the project root:
 
-    scripts/make_liss4_synthetic_pretrain_v3r_from_npz.py
+```sh
+pip install -r requirements.txt
+```
 
-Training:
+Run the self-contained checks. These create temporary fixtures and do not need Bhoonidhi, a downloaded dataset, or the trained checkpoint:
 
-    scripts/train_liss4_synthetic.py
+```sh
+python scripts/validate_liss4_setup.py
+python scripts/validate_liss4_data_prep.py
+python scripts/validate_liss4_training.py
+python scripts/validate_liss4_inference.py
+```
 
-V3R synthetic validation reached 34.50 dB PSNR.
+For a real inference run, provide a three-band GeoTIFF in `[Green, Red, NIR]` order and a local model checkpoint:
 
-The local V3R source patches live in:
+```sh
+python scripts/inspect_liss4.py path/to/cloudy_liss4.tif
+python scripts/infer_liss4_real_cloudy_only_overlap.py \
+  --checkpoint weights/liss4_dsen2cr_synthetic_v3r.pth \
+  --cloudy path/to/cloudy_liss4.tif \
+  --output data/eval/reconstructed.tif \
+  --tile 256 --overlap 64 --device auto
+```
 
-    data/synthetic_pretrain_prod/
+The inference command accepts `auto`, `cpu`, or `cuda`. It writes a georeferenced `uint16` GeoTIFF, keeps the source CRS/transform and band labels, and processes overlapping tiles with a rolling tile-row buffer rather than loading the full scene into float arrays. Memory still grows with the input image width and tile size. No clear reference is used during inference.
 
-This directory is local/ignored because it contains generated NPZ data, but it is still the source dataset required to reproduce the V3R synthetic set.
+For products delivered as three separate, co-registered single-band files, pass the files in Green, Red, NIR order (typically `BAND2`, `BAND3`, `BAND4`) instead of creating a stacked intermediate:
 
-## Real validation
+```sh
+python scripts/infer_liss4_real_cloudy_only_overlap.py \
+  --checkpoint weights/liss4_dsen2cr_synthetic_v3r.pth \
+  --cloudy-bands path/to/BAND2.tif path/to/BAND3.tif path/to/BAND4.tif \
+  --output data/eval/reconstructed.tif \
+  --tile 256 --overlap 64 --device auto
+```
 
-### Guwahati
+The three input grids must match. Larger overlap can reduce tile seams, at a substantial runtime cost; inspect a preview on unfamiliar, cloud-heavy scenes. Without a clear reference, this remains a qualitative reconstruction, not an accuracy evaluation.
 
-The public Guwahati temporal pair is currently the strongest quantitative real-scene result.
+The checkpoint and imagery are intentionally excluded from Git. On a fresh clone, put a checkpoint at the path above or train one locally as described below; do not expect GitHub to contain the ignored local weights or data.
 
-    Cloudy input: 27.941 dB PSNR
-    V3R output:   33.905 dB PSNR
-    Gain:         +5.964 dB
+## Prepare training data from a local clear GeoTIFF
 
-Additional V3R metrics:
+The preparation pipeline can start from any suitable stacked three-band clear LISS-IV GeoTIFF; no Bhoonidhi data or existing NPZ cache is required. For example, this project has a local 1024×1024 Guwahati clear image:
 
-    MAE:  0.00943
-    RMSE: 0.02017
-    SSIM: 0.96237
-    SAM:  3.56°
+```sh
+python scripts/extract_liss4_clear_patches.py \
+  data/raw/clear/guwahati_clear.tif \
+  --output data/synthetic_pretrain_clear \
+  --patch-size 256 --stride 128
 
-This is a temporal reference rather than simultaneous ground truth, so the metrics also contain illumination, registration, seasonal, and land-surface differences.
+python scripts/make_liss4_synthetic_pretrain_v3r_from_npz.py \
+  --manifest data/synthetic_pretrain_clear/manifest.csv \
+  --output data/synthetic_pretrain_v3r_from_guwahati
 
-### Bhoonidhi / Resourcesat
+python scripts/split_liss4_synthetic_manifest.py \
+  --manifest data/synthetic_pretrain_v3r_from_guwahati/manifest.csv \
+  --scene-width 1024 --val-fraction 0.25
 
-A Bhoonidhi search produced several complete LISS-IV acquisitions for Path/Row 110/54.
+python scripts/validate_liss4_synthetic_pretrain.py \
+  --manifest data/synthetic_pretrain_v3r_from_guwahati/manifest.csv \
+  --samples-dir data/synthetic_pretrain_v3r_from_guwahati
+```
 
-The current complete scenes include:
+The extractor refuses to overwrite existing generated files unless `--overwrite` is supplied. V3R currently requires 256×256 source patches; patches are skipped if any of the three bands contains nodata. The above 1024×1024 example produces 49 patches and a spatial split of 35 train / 7 validation patches, with boundary-crossing patches discarded. That small single-scene set is useful for exercising the pipeline, not evidence of broad generalization.
 
-    01-Jun-2020  RS2
-    08-Jun-2020  RS2A
-    12-Aug-2020  RS2
-    01-Nov-2023  RS2
+Train from those split manifests with:
 
-The 01-Jun-2020 acquisition is visibly/cloud-statistically cloud-heavy. The 08-Jun-2020 and 12-Aug-2020 acquisitions are even more cloud-heavy according to the current heuristic cloudiness diagnostic, while 01-Nov-2023 is very clear.
+```sh
+python scripts/train_liss4_synthetic.py \
+  --manifest data/synthetic_pretrain_v3r_from_guwahati/manifest.csv \
+  --train-manifest data/synthetic_pretrain_v3r_from_guwahati/train_manifest.csv \
+  --val-manifest data/synthetic_pretrain_v3r_from_guwahati/val_manifest.csv \
+  --output weights/liss4_dsen2cr_synthetic_from_clear.pth
+```
 
-A 01-Jun-2020 → 01-Nov-2023 temporal pair has about 95% footprint overlap. V3R on the common footprint produced:
+Training uses the GPU when available. The trainer's no-extra-arguments default points to `data/synthetic_pretrain_v3r/manifest.csv` and automatically uses sibling `train_manifest.csv` and `val_manifest.csv`; specify explicit manifests when your data uses another directory. The best checkpoint and a resumable `*_latest.pth` are written under `weights/`.
 
-    Cloudy: MAE 0.28845 | RMSE 0.37218 | PSNR 8.585 dB | SSIM 0.38228 | SAM 24.8345°
-    V3R:    MAE 0.29977 | RMSE 0.40665 | PSNR 7.816 dB | SSIM 0.38970 | SAM 25.1617°
+The local 512-sample V3R experiment was trained from a substantially larger source-patch set than the small Guwahati bootstrap example. Synthetic-cloud validation alone is not a real-cloud benchmark.
 
-This pair is recorded as a stress test rather than a clean benchmark. The acquisitions are more than three years apart and have large radiometric/surface differences. The result shows that the current V3R model is too conservative for this severe real-cloud case.
+## Optional Guwahati evaluation
 
-The next target is a cloudy 110/54 acquisition close in time to the clear 01-Nov-2023 acquisition.
+When the local cloudy/clear pair and checkpoints are available, evaluate the output against the temporal clear reference:
 
-## Bhoonidhi workflow
+```sh
+python scripts/evaluate_liss4_real_multimetric.py \
+  --cloudy data/raw/cloudy/guwahati_cloudy_test.tif \
+  --clear data/raw/clear/guwahati_clear.tif \
+  --v2 data/eval/guwahati_liss4_dsen2cr_v2.tif \
+  --v3r data/eval/guwahati_liss4_dsen2cr_v3r_streamed_final.tif
+```
 
-Raw Bhoonidhi products stay local and are ignored by Git.
+The evaluator reports MAE, RMSE, PSNR, per-band SSIM, and spectral angle mapper (SAM). Metrics assume the two images share a grid and are normalized by the fixed 1023 DN ceiling.
 
-Expected structure:
+## Optional Bhoonidhi workflow
 
-    data/raw/bhoonidhi_liss4/
-        product-folder/
-            BAND2.tif
-            BAND3.tif
-            BAND4.tif
+Bhoonidhi products are kept local and ignored by Git. If downloaded later, the existing tools can scan products, compare cloudiness heuristics, inspect overlaps, create previews, and run the V3R stress test:
 
-Scan products:
+```sh
+python scripts/scan_bhoonidhi_liss4.py
+python scripts/find_bhoonidhi_liss4_pairs.py
+python scripts/compare_bhoonidhi_11054_cloudiness.py
+```
 
-    python scripts/scan_bhoonidhi_liss4.py
+Pair-specific commands are available in each script's `--help`. Cloudiness comparisons are heuristics for candidate screening, not native cloud masks or accuracy claims.
 
-Find overlapping footprints:
+## Data and model contract
 
-    python scripts/find_bhoonidhi_liss4_pairs.py
+- Supply either a stacked three-band GeoTIFF or three co-registered single-band files in `[Green, Red, NIR]` order.
+- Native LISS-IV processing uses one fixed `dn_max=1023`; per-image min/max normalization is intentionally avoided.
+- Inspect unfamiliar products with `scripts/inspect_liss4.py` before inference or training.
+- Train/clear pairs must be co-registered on an identical grid. The paired dataset loader rejects grid mismatches.
+- Real temporal pairs are references, not pixel-perfect ground truth.
+- Local `data/` and model checkpoint files under `weights/` are excluded from Git; only code, configs, and documentation are versioned.
 
-Compare all current 110/54 scenes:
+## Repository map
 
-    python scripts/compare_bhoonidhi_11054_cloudiness.py
+- `src/liss4.py`, `src/liss4_dsen2cr.py`: DN normalization and active model
+- `src/liss4_dataset.py`, `src/liss4_patch_dataset.py`: paired and patch data loaders
+- `scripts/extract_liss4_clear_patches.py`: clear GeoTIFF to NPZ source patches
+- `scripts/make_liss4_synthetic_pretrain_v3r_from_npz.py`: V3R synthetic corruption
+- `scripts/train_liss4_synthetic.py`: training and checkpoint writing
+- `scripts/infer_liss4_real_cloudy_only_overlap.py`: tiled GeoTIFF inference
+- `scripts/evaluate_liss4_real_multimetric.py`: quantitative temporal-reference metrics
+- `scripts/validate_liss4_*.py`: setup, data, training, and inference checks
 
-Preview a pair:
-
-    python scripts/make_bhoonidhi_pair_preview.py <cloudy_scene_id> <clear_scene_id>
-
-Run V3R on a real pair:
-
-    python scripts/evaluate_bhoonidhi_pair_v3r.py <cloudy_scene_id> <clear_scene_id>
-
-Create the visual diagnostic:
-
-    python scripts/make_bhoonidhi_v3r_diagnostic.py <cloudy_scene_id> <clear_scene_id>
-
-The cloudiness scripts are heuristic diagnostics only. They are useful for screening candidates, not for claiming a ground-truth cloud percentage.
-
-## Synthetic-data workflow
-
-The current workflow is:
-
-    native LISS-IV clear imagery
-            ↓
-    controlled synthetic clouds
-            ↓
-    V3R pretraining
-            ↓
-    real cloudy/clear validation
-
-Validate a generated dataset with:
-
-    python scripts/validate_liss4_synthetic_pretrain.py
-
-Train with the active LISS-IV trainer:
-
-    python scripts/train_liss4_synthetic.py
-
-## LISS-IV data contract
-
-The project uses the fixed band order:
-
-    BAND2 → Green
-    BAND3 → Red
-    BAND4 → NIR
-
-Native products are treated as 10-bit data with a fixed ceiling of 1023.
-
-Normalization is:
-
-    normalized = clip(DN, 0, 1023) / 1023
-
-Per-image min/max normalization is intentionally avoided.
-
-Inspect a new product before using it:
-
-    python scripts/inspect_liss4.py path/to/product.tif
-
-## Important validation lessons
-
-### Do not trust a public sample blindly
-
-A public Chennai cloudy sample was previously tested and found to contain a strong periodic 128-pixel checkerboard artifact already present in the source TIFF. It is therefore not used as validation evidence.
-
-### Temporal pairs are not ground truth
-
-A cloudy acquisition and a clear acquisition from different dates can contain:
-
-    illumination differences
-    seasonal changes
-    land-cover changes
-    geometric/registration differences
-    radiometric differences
-
-Metrics from such pairs should therefore be reported as temporal-reference results, not as exact pixel-level ground truth.
-
-### Dataset domain matters
-
-V2 synthetic clouds were substantially stronger than the measured real-scene corruption distribution. V3R reduced the synthetic corruption amplitude and produced a large improvement on the Guwahati real pair, but the difficult Bhoonidhi stress test shows that the current model does not yet generalize to every real cloud regime.
-
-## External DSen2-CR reference
-
-src/dsen2cr.py contains a PyTorch implementation of the published DSen2-CR residual architecture.
-
-The original checkpoint is not redistributed in this repository. Use scripts/convert_dsen2cr_weights.py to convert the upstream checkpoint locally when needed.
-
-Upstream project:
-
-    https://github.com/ameraner/dsen2-cr
-
-## Repository structure
-
-    CLEARSKKYAI/
-    ├── configs/
-    │   └── liss4_manifest.csv.example
-    ├── data/                         local data; ignored
-    ├── previews/                     selected visual experiment outputs
-    ├── scripts/                      active LISS-IV tools
-    ├── src/
-    │   ├── dsen2cr.py
-    │   ├── liss4.py
-    │   ├── liss4_dataset.py
-    │   ├── liss4_dsen2cr.py
-    │   └── liss4_patch_dataset.py
-    ├── weights/
-    │   └── README.md
-    ├── .gitignore
-    ├── requirements.txt
-    └── readme.md
-
-## Requirements
-
-Install:
-
-    pip install -r requirements.txt
-
-The current LISS-IV pipeline needs PyTorch, NumPy, Rasterio and Matplotlib. h5py is retained for optional conversion of the published DSen2-CR checkpoint.
+The repository also retains `src/dsen2cr.py` and its converter as an optional reference to the published DSen2-CR implementation. The upstream checkpoint is not included.
 
 ## Known limitations
 
-- Native paired LISS-IV cloudy/clear data are scarce.
-- V3R training still uses synthetic cloud corruption.
-- Current real references are temporal rather than simultaneous.
-- Full-scene inference must be tiled and can take substantial time.
-- The active V3R experiments do not yet use SAR.
-- Heuristic cloudiness screening is not a substitute for a native cloud mask.
-
-## Next step
-
-Find a cloudy 110/54 Bhoonidhi acquisition near the clear 01-Nov-2023 observation, then evaluate V3R on that closer temporal pair.
-
-The longer-term target is a larger multi-AOI real-cloud LISS-IV benchmark with native cloud masks and closely matched temporal observations.
+- Current synthetic training evidence comes from one source scene; more diverse clear LISS-IV sources are needed.
+- Cloud realism and transfer to unseen regions/cloud regimes remain unproven.
+- Native paired cloudy/clear acquisitions and reliable cloud masks are scarce.
+- The active checkpoint does not use SAR.
+- Large scenes are processed without full-scene float buffers, but runtime and row-buffer memory still depend on scene width, overlap, and tile size.
