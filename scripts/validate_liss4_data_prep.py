@@ -54,6 +54,37 @@ def main():
         )
         assert "Written      : 15" in extraction.stdout
 
+        incompatible_patch_size = run(
+            "extract_liss4_clear_patches.py",
+            source_path,
+            "--output",
+            os.path.join(temp, "wrong_patch_size"),
+            "--patch-size",
+            "128",
+            check=False,
+        )
+        assert incompatible_patch_size.returncode != 0
+        assert "V3R generator requires 256x256" in incompatible_patch_size.stderr
+
+        nodata_path = os.path.join(temp, "clear_one_band_nodata.tif")
+        nodata_image = image.copy()
+        nodata_image[0, 10, 10] = 0
+        nodata_profile = {**profile, "nodata": 0}
+        with rasterio.open(nodata_path, "w", **nodata_profile) as dst:
+            dst.write(nodata_image)
+        nodata_extraction = run(
+            "extract_liss4_clear_patches.py",
+            nodata_path,
+            "--output",
+            os.path.join(temp, "nodata_patches"),
+            "--patch-size",
+            "256",
+            "--stride",
+            "128",
+        )
+        assert "Written      : 14" in nodata_extraction.stdout
+        assert "Skipped      : 1 invalid/nodata patches" in nodata_extraction.stdout
+
         collision = run(
             "extract_liss4_clear_patches.py",
             source_path,
@@ -107,6 +138,7 @@ def main():
 
     print("PASS clear GeoTIFF to NPZ patches to V3R synthetic set to spatial split")
     print("PASS split separation and generated dataset validation")
+    print("PASS fixed V3R patch-size contract and per-band nodata filtering")
     print("PASS overwrite guard for existing generated data")
 
 

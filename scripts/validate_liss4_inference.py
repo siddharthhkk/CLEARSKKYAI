@@ -37,8 +37,10 @@ def main():
         with rasterio.open(source_path, "w", **profile) as dst:
             dst.write(image)
             dst.update_tags(source="inference-smoke-test")
+            dst.update_tags(ns="SENSOR", platform="test-platform")
             for index, name in enumerate(("Green", "Red", "NIR"), start=1):
                 dst.set_band_description(index, name)
+                dst.update_tags(index, ns="BAND_META", band_role=name)
 
         band_paths = [os.path.join(temp, f"band{index}.tif") for index in (2, 3, 4)]
         band_profile = profile.copy()
@@ -48,6 +50,8 @@ def main():
                 dst.write(image[index:index + 1])
                 dst.set_band_description(1, band_name)
                 dst.update_tags(1, source_band=f"BAND{index + 2}")
+                dst.update_tags(ns="SOURCE_META", source_band=f"BAND{index + 2}")
+                dst.update_tags(1, ns="BAND_META", band_role=band_name)
 
         model = LISS4DSen2CR(features=8, blocks=1, res_scale=0.1, use_sar=False)
         torch.save(
@@ -95,6 +99,8 @@ def main():
             assert output.transform == transform
             assert output.descriptions == ("Green", "Red", "NIR")
             assert output.tags()["source"] == "inference-smoke-test"
+            assert output.tags(ns="SENSOR")["platform"] == "test-platform"
+            assert output.tags(2, ns="BAND_META")["band_role"] == "Red"
             reconstructed = output.read()
             assert np.isfinite(reconstructed).all()
             assert reconstructed.min() >= 0
@@ -118,6 +124,12 @@ def main():
             assert output.descriptions == ("Green", "Red", "NIR")
             for index in range(1, 4):
                 assert output.tags(index)["source_band"] == f"BAND{index + 1}"
+                assert output.tags(index, ns="SOURCE_META")["source_band"] == f"BAND{index + 1}"
+                assert output.tags(index, ns="BAND_META")["band_role"] == (
+                    "Green",
+                    "Red",
+                    "NIR",
+                )[index - 1]
         assert np.array_equal(reconstructed, separate_result)
 
         overwrite = subprocess.run(
@@ -141,6 +153,20 @@ def main():
         protected_contents = b"existing-output-must-survive"
         with open(protected_output, "wb") as f:
             f.write(protected_contents)
+
+        nan_dn_command = command.copy()
+        nan_dn_command[nan_dn_command.index("--output") + 1] = protected_output
+        nan_dn_command.extend(["--dn-max", "nan"])
+        nan_dn = subprocess.run(
+            nan_dn_command,
+            capture_output=True,
+            text=True,
+            cwd=PROJECT_ROOT,
+        )
+        assert nan_dn.returncode != 0
+        assert "--dn-max must be finite and positive" in nan_dn.stderr
+        with open(protected_output, "rb") as f:
+            assert f.read() == protected_contents
 
         invalid_command = command.copy()
         invalid_command[invalid_command.index("--cloudy") + 1] = invalid_source
@@ -176,7 +202,7 @@ def main():
             assert f.read() == protected_contents
 
     print("PASS overlap-tiled inference smoke test (CPU, small checkpoint)")
-    print("PASS GeoTIFF dimensions, CRS, transform, band descriptions, tags, and DN range")
+    print("PASS GeoTIFF grid, default and namespaced metadata, descriptions, and DN range")
     print("PASS stacked and separate-band inputs produce identical predictions")
     print("PASS input-overwrite, grid-validation, and output-preservation guards")
 

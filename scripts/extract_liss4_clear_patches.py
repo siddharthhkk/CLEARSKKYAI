@@ -6,6 +6,8 @@ import numpy as np
 import rasterio
 from rasterio.windows import Window
 
+V3R_PATCH_SIZE = 256
+
 
 def patch_starts(length, patch_size, stride):
     if length < patch_size:
@@ -41,8 +43,11 @@ def main():
     )
     args = parser.parse_args()
 
-    if args.patch_size < 1:
-        raise ValueError("--patch-size must be positive.")
+    if args.patch_size != V3R_PATCH_SIZE:
+        raise ValueError(
+            f"--patch-size must be {V3R_PATCH_SIZE}; the V3R generator requires "
+            "256x256 source patches."
+        )
     if not 1 <= args.stride <= args.patch_size:
         raise ValueError("--stride must be between 1 and --patch-size.")
 
@@ -98,8 +103,12 @@ def main():
                         window=window,
                         out_dtype="float32",
                     )
-                    valid = src.dataset_mask(window=window) > 0
-                    if not np.isfinite(clear).all() or not valid.all():
+                    band_masks = src.read_masks(
+                        indexes=(1, 2, 3),
+                        window=window,
+                    )
+                    all_bands_valid = np.all(band_masks > 0, axis=0)
+                    if not np.isfinite(clear).all() or not all_bands_valid.all():
                         skipped_invalid += 1
                         continue
 

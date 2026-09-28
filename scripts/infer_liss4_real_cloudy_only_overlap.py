@@ -1,5 +1,6 @@
 import argparse
 from contextlib import ExitStack
+import math
 import os
 import sys
 import tempfile
@@ -17,6 +18,20 @@ if SRC_DIR not in sys.path:
 
 from liss4 import normalize_liss4
 from liss4_dsen2cr import LISS4DSen2CR
+
+READ_ONLY_TAG_NAMESPACES = {"IMAGE_STRUCTURE", "DERIVED_SUBDATASETS"}
+
+
+def namespaced_tags(dataset, band_index=0):
+    """Return writable non-default metadata domains and their tags."""
+    result = {}
+    for namespace in dataset.tag_namespaces(band_index):
+        if namespace in READ_ONLY_TAG_NAMESPACES:
+            continue
+        tags = dataset.tags(band_index, ns=namespace)
+        if tags:
+            result[namespace] = tags
+    return result
 
 
 class ThreeBandStack:
@@ -63,10 +78,25 @@ class ThreeBandStack:
         ]
         return np.stack(bands, axis=0)
 
-    def tags(self, band_index=None):
+    def tags(self, band_index=None, ns=None):
         if band_index is None:
-            return {}
-        return self.datasets[band_index - 1].tags(1)
+            return {} if ns is None else self.datasets[0].tags(ns=ns)
+        dataset = self.datasets[band_index - 1]
+        if ns is None:
+            return dataset.tags(1)
+        tags = dataset.tags(ns=ns)
+        tags.update(dataset.tags(1, ns=ns))
+        return tags
+
+    def tag_namespaces(self, band_index=0):
+        if band_index == 0:
+            return self.datasets[0].tag_namespaces()
+        dataset = self.datasets[band_index - 1]
+        namespaces = dataset.tag_namespaces()
+        for namespace in dataset.tag_namespaces(1):
+            if namespace not in namespaces:
+                namespaces.append(namespace)
+        return namespaces
 
 
 def make_weight(h, w):
@@ -248,8 +278,8 @@ def main():
         raise ValueError("--tile must be positive.")
     if not 0 <= args.overlap < args.tile:
         raise ValueError("--overlap must satisfy 0 <= overlap < tile.")
-    if args.dn_max <= 0:
-        raise ValueError("--dn-max must be positive.")
+    if not math.isfinite(args.dn_max) or args.dn_max <= 0:
+        raise ValueError("--dn-max must be finite and positive.")
     if args.dn_max > np.iinfo(np.uint16).max:
         raise ValueError("--dn-max must fit the uint16 output range (<= 65535).")
 
@@ -300,6 +330,10 @@ def main():
             units = src.units
             dataset_tags = src.tags()
             band_tags = [src.tags(i) for i in range(1, 4)]
+            dataset_namespaced_tags = namespaced_tags(src)
+            band_namespaced_tags = [
+                namespaced_tags(src, i) for i in range(1, 4)
+            ]
             profile.update(
                 driver="GTiff",
                 dtype="uint16",
@@ -320,6 +354,8 @@ def main():
                     overlap=args.overlap,
                 )
                 dst.update_tags(**dataset_tags)
+                for namespace, tags in dataset_namespaced_tags.items():
+                    dst.update_tags(ns=namespace, **tags)
                 for band_index in range(1, 4):
                     if descriptions[band_index - 1]:
                         dst.set_band_description(band_index, descriptions[band_index - 1])
@@ -327,6 +363,8 @@ def main():
                         dst.set_band_unit(band_index, units[band_index - 1])
                     if band_tags[band_index - 1]:
                         dst.update_tags(band_index, **band_tags[band_index - 1])
+                    for namespace, tags in band_namespaced_tags[band_index - 1].items():
+                        dst.update_tags(band_index, ns=namespace, **tags)
 
             width, height = src.width, src.height
 

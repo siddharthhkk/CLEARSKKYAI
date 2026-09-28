@@ -1,5 +1,6 @@
 import argparse
 import csv
+import math
 import os
 import sys
 import time
@@ -84,8 +85,10 @@ def main():
         raise ValueError("--grad-accum must be at least 1.")
     if args.features < 1 or args.blocks < 1:
         raise ValueError("--features and --blocks must be at least 1.")
-    if args.lambda_cloud < 0:
-        raise ValueError("--lambda-cloud must be non-negative.")
+    if not math.isfinite(args.lr) or args.lr <= 0:
+        raise ValueError("--lr must be finite and positive.")
+    if not math.isfinite(args.lambda_cloud) or args.lambda_cloud < 0:
+        raise ValueError("--lambda-cloud must be finite and non-negative.")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device       : {device}")

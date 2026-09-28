@@ -74,6 +74,20 @@ def main():
             "--latest-output",
             latest_path,
         ]
+        for option, value, expected_error in (
+            ("--lambda-cloud", "nan", "--lambda-cloud must be finite and non-negative"),
+            ("--lr", "nan", "--lr must be finite and positive"),
+        ):
+            invalid = subprocess.run(
+                command + [option, value],
+                capture_output=True,
+                text=True,
+                cwd=PROJECT_ROOT,
+            )
+            assert invalid.returncode != 0
+            assert expected_error in invalid.stderr
+        assert not os.path.exists(best_path)
+
         result = subprocess.run(
             command,
             check=True,
@@ -93,6 +107,7 @@ def main():
         assert "val_PSNR" in result.stdout
 
     print("PASS one-epoch training smoke test with automatic sibling train/val manifests")
+    print("PASS non-finite learning-rate and cloud-loss-weight validation")
     print("PASS best/latest checkpoint creation and source metadata")
 
 

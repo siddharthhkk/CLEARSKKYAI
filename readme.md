@@ -93,7 +93,7 @@ python scripts/validate_liss4_synthetic_pretrain.py \
   --samples-dir data/synthetic_pretrain_v3r_from_guwahati
 ```
 
-The extractor refuses to overwrite existing generated files unless `--overwrite` is supplied. The above 1024×1024 example produces 49 patches and a spatial split of 35 train / 7 validation patches, with boundary-crossing patches discarded. That small single-scene set is useful for exercising the pipeline, not evidence of broad generalization.
+The extractor refuses to overwrite existing generated files unless `--overwrite` is supplied. V3R currently requires 256×256 source patches; patches are skipped if any of the three bands contains nodata. The above 1024×1024 example produces 49 patches and a spatial split of 35 train / 7 validation patches, with boundary-crossing patches discarded. That small single-scene set is useful for exercising the pipeline, not evidence of broad generalization.
 
 Train from those split manifests with:
 
