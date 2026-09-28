@@ -106,6 +106,16 @@ def main():
     ap.add_argument("--clear", default="data/raw/clear/guwahati_clear.tif")
     ap.add_argument("--v2", default="data/eval/guwahati_liss4_dsen2cr_v2.tif")
     ap.add_argument("--v3r", default="data/eval/guwahati_liss4_dsen2cr_v3r.tif")
+    ap.add_argument(
+        "--baseline-label",
+        default="V2",
+        help="Display label for the --v2 raster (default: V2).",
+    )
+    ap.add_argument(
+        "--candidate-label",
+        default="V3R",
+        help="Display label for the --v3r raster (default: V3R).",
+    )
     ap.add_argument("--dn-max", type=float, default=1023.0)
     ap.add_argument("--ssim-window", type=int, default=11)
     args = ap.parse_args()
@@ -131,8 +141,8 @@ def main():
 
     for name, pred in [
         ("Cloudy", cloudy),
-        ("V2", v2),
-        ("V3R", v3r),
+        (args.baseline_label, v2),
+        (args.candidate_label, v3r),
     ]:
         mae, rmse, psnr = basic_metrics(pred, target)
         score_ssim = ssim(pred, target, window=args.ssim_window)

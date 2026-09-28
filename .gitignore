@@ -12,6 +12,8 @@ data/synthetic_pretrain_prod/**
 data/synthetic_pretrain_v2/**
 data/synthetic_pretrain_v3r/**
 data/synthetic_pretrain_v3r_from_guwahati/**
+data/synthetic_pretrain_clear_bhoonidhi_*/
+data/synthetic_pretrain_v3r_bhoonidhi_*/
 
 # Local model checkpoints
 weights/*.pth

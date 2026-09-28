@@ -104,9 +104,140 @@ def main():
         assert checkpoint["blocks"] == 1
         assert checkpoint["train_source"] == train_manifest
         assert checkpoint["val_source"] == val_manifest
+        assert checkpoint["train_samples"] == 1
+        assert checkpoint["val_samples"] == 1
+        assert checkpoint["batch_size"] == 1
+        assert checkpoint["grad_accum"] == 1
+        assert checkpoint["initial_checkpoint"] is None
         assert "val_PSNR" in result.stdout
 
+        second_data_dir = os.path.join(temp, "second_data")
+        second_train_manifest = write_split(
+            second_data_dir, "train_manifest.csv", 0, 14
+        )
+        second_val_manifest = write_split(
+            second_data_dir, "val_manifest.csv", 1, 19
+        )
+        combined_best = os.path.join(temp, "weights", "combined_best.pth")
+        combined_latest = os.path.join(temp, "weights", "combined_latest.pth")
+        combined_command = [
+            sys.executable,
+            os.path.join(PROJECT_ROOT, "scripts", "train_liss4_synthetic.py"),
+            "--train-manifest",
+            train_manifest,
+            "--train-manifest",
+            second_train_manifest,
+            "--val-manifest",
+            val_manifest,
+            "--val-manifest",
+            second_val_manifest,
+            "--epochs",
+            "1",
+            "--batch-size",
+            "1",
+            "--grad-accum",
+            "1",
+            "--features",
+            "8",
+            "--blocks",
+            "1",
+            "--output",
+            combined_best,
+            "--latest-output",
+            combined_latest,
+        ]
+        combined = subprocess.run(
+            combined_command,
+            check=True,
+            capture_output=True,
+            text=True,
+            cwd=PROJECT_ROOT,
+        )
+        combined_checkpoint = torch.load(
+            combined_best, map_location="cpu", weights_only=False
+        )
+        assert "Train samples: 2 | Val samples: 2" in combined.stdout
+        assert combined_checkpoint["train_source"] == [
+            os.path.abspath(train_manifest),
+            os.path.abspath(second_train_manifest),
+        ]
+        assert combined_checkpoint["val_source"] == [
+            os.path.abspath(val_manifest),
+            os.path.abspath(second_val_manifest),
+        ]
+        assert combined_checkpoint["train_samples"] == 2
+        assert combined_checkpoint["val_samples"] == 2
+
+        alternate_val_manifest = write_split(
+            data_dir, "val_manifest_alternate.csv", 1, 9
+        )
+        resumed_best = os.path.join(temp, "weights", "resumed_best.pth")
+        resumed_latest = os.path.join(temp, "weights", "resumed_latest.pth")
+        resumed = subprocess.run(
+            [
+                sys.executable,
+                os.path.join(PROJECT_ROOT, "scripts", "train_liss4_synthetic.py"),
+                "--train-manifest",
+                train_manifest,
+                "--val-manifest",
+                alternate_val_manifest,
+                "--epochs",
+                "2",
+                "--batch-size",
+                "1",
+                "--grad-accum",
+                "1",
+                "--features",
+                "8",
+                "--blocks",
+                "1",
+                "--output",
+                resumed_best,
+                "--latest-output",
+                resumed_latest,
+                "--resume",
+                latest_path,
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            cwd=PROJECT_ROOT,
+        )
+        assert "Validation source changed; resetting best validation PSNR" in resumed.stdout
+        assert "Resuming from epoch 2" in resumed.stdout
+        resumed_checkpoint = torch.load(
+            resumed_best, map_location="cpu", weights_only=False
+        )
+        assert resumed_checkpoint["epoch"] == 2
+        assert resumed_checkpoint["val_source"] == alternate_val_manifest
+        assert resumed_checkpoint["initial_checkpoint"] == os.path.abspath(latest_path)
+
+        evaluation = subprocess.run(
+            [
+                sys.executable,
+                os.path.join(
+                    PROJECT_ROOT, "scripts", "evaluate_liss4_synthetic_checkpoint.py"
+                ),
+                "--checkpoint",
+                combined_best,
+                "--manifest",
+                val_manifest,
+                "--manifest",
+                second_val_manifest,
+                "--device",
+                "cpu",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            cwd=PROJECT_ROOT,
+        )
+        assert "Combined validation | samples=2 | PSNR=" in evaluation.stdout
+
     print("PASS one-epoch training smoke test with automatic sibling train/val manifests")
+    print("PASS training from paired lists of independent train/validation manifests")
+    print("PASS resume resets best validation score when validation source changes")
+    print("PASS synthetic checkpoint evaluation combines manifest datasets")
     print("PASS non-finite learning-rate and cloud-loss-weight validation")
     print("PASS best/latest checkpoint creation and source metadata")
 

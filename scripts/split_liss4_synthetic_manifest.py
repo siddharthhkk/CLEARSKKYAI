@@ -83,7 +83,9 @@ def main():
         args.val_output or os.path.join(root, "val_manifest.csv")
     )
 
-    fields = ["idx", "scene", "row", "col", "cloud_seed"]
+    # Keep source-specific audit fields (for example, cloud-screen scores) in
+    # both outputs instead of silently discarding them or rejecting the split.
+    fields = list(rows[0].keys())
     for path, subset in [(train_path, train), (val_path, val)]:
         with open(path, "w", newline="", encoding="utf-8") as f:
             w = csv.DictWriter(f, fieldnames=fields)

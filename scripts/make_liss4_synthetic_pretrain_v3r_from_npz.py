@@ -220,7 +220,10 @@ def main():
     ds = V3RealFromNPZDataset(manifest, dn_max=args.dn_max)
 
     out_manifest = os.path.join(output, "manifest.csv")
-    fields = ["idx", "scene", "row", "col", "cloud_seed"]
+    fields = list(ds.rows[0].keys())
+    for field in ("idx", "scene", "row", "col", "cloud_seed"):
+        if field not in fields:
+            fields.append(field)
 
     with open(out_manifest, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=fields)
@@ -241,7 +244,8 @@ def main():
                 col=item["col"],
             )
 
-            w.writerow(
+            row = dict(ds.rows[i])
+            row.update(
                 {
                     "idx": i,
                     "scene": item["scene"],
@@ -250,6 +254,7 @@ def main():
                     "cloud_seed": int(item["cloud_seed"]),
                 }
             )
+            w.writerow(row)
 
     print("=== SYNTHETIC LISS-IV V3R ===")
     print(f"Source manifest: {manifest}")

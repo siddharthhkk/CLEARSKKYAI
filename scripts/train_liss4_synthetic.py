@@ -7,7 +7,7 @@ import time
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import ConcatDataset, Dataset, DataLoader
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
@@ -43,12 +43,26 @@ class NPZLISS4Dataset(Dataset):
     def __getitem__(self, idx):
         r = self.rows[idx]
         p = os.path.join(self.root, f"sample_{int(r['idx']):06d}.npz")
-        d = np.load(p)
+        with np.load(p) as d:
+            cloudy = d["cloudy"].astype(np.float32)
+            clear = d["clear"].astype(np.float32)
+            mask = d["mask"].astype(np.float32)
         return {
-            "cloudy": torch.from_numpy(d["cloudy"].astype(np.float32)),
-            "clear": torch.from_numpy(d["clear"].astype(np.float32)),
-            "mask": torch.from_numpy(d["mask"].astype(np.float32)),
+            "cloudy": torch.from_numpy(cloudy),
+            "clear": torch.from_numpy(clear),
+            "mask": torch.from_numpy(mask),
         }
+
+
+def datasets_from_manifests(manifests):
+    paths = [os.path.abspath(path) for path in manifests]
+    if len(set(paths)) != len(paths):
+        raise ValueError("A training or validation manifest was provided more than once.")
+
+    datasets = [NPZLISS4Dataset(path, set()) for path in paths]
+    combined = datasets[0] if len(datasets) == 1 else ConcatDataset(datasets)
+    source = paths[0] if len(paths) == 1 else paths
+    return combined, source, paths
 
 
 def masked_l1(pred, target, mask):
@@ -61,8 +75,18 @@ def main():
         description="Train DSen2-CR-style LISS-IV model on synthetic native-LISS-IV clouds."
     )
     ap.add_argument("--manifest", default="data/synthetic_pretrain_v3r/manifest.csv")
-    ap.add_argument("--train-manifest", default=None)
-    ap.add_argument("--val-manifest", default=None)
+    ap.add_argument(
+        "--train-manifest",
+        action="append",
+        default=None,
+        help="Training manifest; repeat to combine independent datasets.",
+    )
+    ap.add_argument(
+        "--val-manifest",
+        action="append",
+        default=None,
+        help="Validation manifest; repeat to combine independent datasets.",
+    )
     ap.add_argument("--train-scene", action="append")
     ap.add_argument("--val-scene", action="append")
     ap.add_argument("--epochs", type=int, default=20)
@@ -101,14 +125,12 @@ def main():
     if args.train_manifest or args.val_manifest:
         if not (args.train_manifest and args.val_manifest):
             raise ValueError("Provide both --train-manifest and --val-manifest.")
-
-        train_manifest = os.path.abspath(args.train_manifest)
-        val_manifest = os.path.abspath(args.val_manifest)
-
-        train_ds = NPZLISS4Dataset(train_manifest, set())
-        val_ds = NPZLISS4Dataset(val_manifest, set())
-        train_source = train_manifest
-        val_source = val_manifest
+        train_ds, train_source, train_paths = datasets_from_manifests(
+            args.train_manifest
+        )
+        val_ds, val_source, val_paths = datasets_from_manifests(args.val_manifest)
+        if set(train_paths) & set(val_paths):
+            raise ValueError("A manifest cannot appear in both train and validation.")
     else:
         if args.train_scene or args.val_scene:
             if not args.train_scene or not args.val_scene:
@@ -199,9 +221,27 @@ def main():
             optimizer.load_state_dict(ckpt["optimizer_state_dict"])
         if "scaler_state_dict" in ckpt:
             scaler.load_state_dict(ckpt["scaler_state_dict"])
-        best = float(ckpt.get("best_val_psnr", best))
+        if ckpt.get("val_source") == val_source:
+            best = float(ckpt.get("best_val_psnr", best))
+        else:
+            print(
+                "Validation source changed; resetting best validation PSNR "
+                "for the new split."
+            )
         start_epoch = int(ckpt.get("epoch", 0)) + 1
         print(f"Resuming from epoch {start_epoch}")
+
+    checkpoint_metadata = {
+        "train_source": train_source,
+        "val_source": val_source,
+        "train_samples": len(train_ds),
+        "val_samples": len(val_ds),
+        "batch_size": args.batch_size,
+        "grad_accum": args.grad_accum,
+        "learning_rate": args.lr,
+        "lambda_cloud": args.lambda_cloud,
+        "initial_checkpoint": os.path.abspath(args.resume) if args.resume else None,
+    }
 
     for epoch in range(start_epoch, args.epochs + 1):
         model.train()
@@ -286,9 +326,8 @@ def main():
                     "blocks": args.blocks,
                     "dn_max": 1023.0,
                     "best_val_psnr": best,
-                    "train_source": train_source,
-                    "val_source": val_source,
                     "epoch": epoch,
+                    **checkpoint_metadata,
                 },
                 args.output,
             )
@@ -303,8 +342,7 @@ def main():
                 "blocks": args.blocks,
                 "dn_max": 1023.0,
                 "best_val_psnr": best,
-                "train_source": train_source,
-                "val_source": val_source,
+                **checkpoint_metadata,
             },
             latest_output,
         )
