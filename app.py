@@ -20,6 +20,7 @@ CHECKPOINT = PROJECT_ROOT / "weights" / "dsen2cr_sar_carl.pth"
 GALLERY_MANIFEST = PROJECT_ROOT / "data" / "sentinel_demo" / "manifest.csv"
 MAX_PREVIEW_EDGE = 900
 REFLECTANCE_MAX = 10000.0
+ERROR_PREVIEW_SCALE = 48.0
 
 
 def read_gallery() -> list[dict]:
@@ -99,15 +100,21 @@ def make_shared_previews(
 
 
 def difference_preview(left: np.ndarray, right: np.ndarray) -> np.ndarray:
-    """Turn the absolute true-color-band difference into a compact error heatmap."""
+    """Show absolute RGB preview error on a fixed 0–48 display-level scale."""
     error = np.abs(left - right)
     magnitude = np.mean(error, axis=0)
-    scale = max(float(np.percentile(magnitude, 99)), 1.0)
-    value = np.clip(magnitude / scale, 0.0, 1.0)
-    red = np.clip(2.5 * value, 0.0, 1.0)
-    green = np.clip(2.5 * value - 0.8, 0.0, 1.0)
-    blue = np.clip(3.0 * value - 2.2, 0.0, 1.0)
-    return np.rint(np.stack((red, green, blue), axis=-1) * 255).astype(np.uint8)
+    value = np.clip(magnitude / ERROR_PREVIEW_SCALE, 0.0, 1.0)
+    # Keep colors comparable across samples instead of stretching every sample
+    # independently until its 99th percentile becomes yellow.
+    stops = np.array((0.0, 0.33, 0.66, 1.0), dtype=np.float32)
+    palette = np.array(
+        ((30, 25, 90), (45, 115, 185), (40, 185, 155), (250, 230, 70)),
+        dtype=np.float32,
+    )
+    return np.stack(
+        [np.interp(value, stops, palette[:, channel]) for channel in range(3)],
+        axis=-1,
+    ).round().astype(np.uint8)
 
 
 def _score_pair(reference: np.ndarray, estimate: np.ndarray, valid: np.ndarray) -> dict:
@@ -352,11 +359,15 @@ def run_selected_input(selection: dict) -> None:
             if target_raw is not None:
                 difference = difference_preview(previews[1], previews[2])
                 metrics = compare_reference(cloudy_path, output_path, selection["target_path"])
-                difference_caption = "Absolute error vs paired clear reference (relative color scale)"
+                difference_caption = (
+                    "RGB preview error · dark = lower · yellow = 48+ display levels"
+                )
             else:
                 difference = difference_preview(previews[0], previews[1])
                 metrics = None
-                difference_caption = "Change from cloudy input (not a reference-based error map)"
+                difference_caption = (
+                    "RGB preview change · dark = lower · yellow = 48+ display levels"
+                )
             with rasterio.open(output_path) as result_ds:
                 info = {
                     "width": result_ds.width,
@@ -402,7 +413,8 @@ def display_results(result: dict | None, current_input: str) -> None:
         ".block-container{padding-top:1.5rem;padding-bottom:2rem;}"
         "[data-testid='stSidebar']{background:#20212b;}"
         "[data-testid='stMetric']{background:#171922;padding:14px;border-radius:10px;}"
-        "[data-testid='stImage'] img{border-radius:8px;}"
+        "[data-testid='stImage'] img{border-radius:8px;max-height:260px!important;"
+        "height:auto!important;object-fit:contain;}"
         "</style>",
         unsafe_allow_html=True,
     )
