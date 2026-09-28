@@ -102,7 +102,9 @@ def make_shared_previews(
 def difference_preview(left: np.ndarray, right: np.ndarray) -> np.ndarray:
     """Show absolute RGB preview error on a fixed 0–48 display-level scale."""
     error = np.abs(left - right)
-    magnitude = np.mean(error, axis=0)
+    # Inputs are display previews in HWC layout; reducing axis 0 collapsed the
+    # heatmap to a 3-pixel-wide strip instead of averaging each pixel's RGB.
+    magnitude = np.mean(error, axis=-1)
     value = np.clip(magnitude / ERROR_PREVIEW_SCALE, 0.0, 1.0)
     # Keep colors comparable across samples instead of stretching every sample
     # independently until its 99th percentile becomes yellow.
@@ -413,7 +415,7 @@ def display_results(result: dict | None, current_input: str) -> None:
         ".block-container{padding-top:1.5rem;padding-bottom:2rem;}"
         "[data-testid='stSidebar']{background:#20212b;}"
         "[data-testid='stMetric']{background:#171922;padding:14px;border-radius:10px;}"
-        "[data-testid='stImage'] img{border-radius:8px;max-height:260px!important;"
+        "[data-testid='stImage'] img{border-radius:8px;max-height:320px!important;"
         "height:auto!important;object-fit:contain;}"
         "</style>",
         unsafe_allow_html=True,
