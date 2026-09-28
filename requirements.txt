@@ -6,6 +6,7 @@ streamlit>=1.57.0
 
 # Preview / diagnostics
 matplotlib>=3.7.0
+scipy>=1.10.0
 
 # Optional published DSen2-CR checkpoint conversion
 h5py>=3.8.0

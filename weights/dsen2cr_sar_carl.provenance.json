@@ -1,0 +1,21 @@
+{
+  "artifact": "dsen2cr_sar_carl.pth",
+  "artifact_type": "PyTorch state_dict converted from the original authors' published pretrained checkpoint",
+  "artifact_sha256": "EAC1A8B598DE5739223D3AA11C9FAD6E0E00F05427DDD6683BA7ECA96D3A3A56",
+  "trained_by_this_project": false,
+  "upstream_project": "https://github.com/ameraner/dsen2-cr",
+  "upstream_checkpoint_name": "model_SARcarl.hdf5",
+  "upstream_checkpoint_download": "https://drive.google.com/file/d/1L3YUVOnlg67H5VwlgYO9uC9iuNlq7VMg/view",
+  "upstream_checkpoint_sha256_local_source": "BCDB750F4E8C01CDD19238E4EA3DDDDAE59F62E7A4C2F62F289389E09CB8EB4F",
+  "conversion_script": "scripts/convert_dsen2cr_weights.py",
+  "conversion_check": "Reconverted from the local HDF5 source; all 68 state-dict tensors compared equal.",
+  "architecture": {
+    "input_channels": 15,
+    "output_channels": 13,
+    "features": 256,
+    "residual_blocks": 16,
+    "residual_scale": 0.1
+  },
+  "license": "GNU GPL-3.0; see LICENSE and THIRD_PARTY_NOTICES.md",
+  "citation": "Meraner et al. (2020), ISPRS Journal of Photogrammetry and Remote Sensing 166, 333-346, doi:10.1016/j.isprsjprs.2020.05.013"
+}

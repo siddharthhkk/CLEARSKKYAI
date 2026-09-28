@@ -4,6 +4,8 @@ ClearSky-AI is a personal remote-sensing research project. Its primary demo take
 
 This project owns the application, data preparation, and evaluation workflow—not the pretrained weights or their original architecture. Results are estimates and can hallucinate or miss surface detail hidden by clouds. See [PROBLEM_STATEMENT.md](PROBLEM_STATEMENT.md) for the objective, input contract, evaluation plan, and limitations.
 
+The software is distributed under GNU GPL-3.0; see [LICENSE](LICENSE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). The sample dataset has its own attribution and terms described below.
+
 ## Start here: Sentinel reconstruction demo
 
 The 1,060 paired demo samples (3,181 GeoTIFFs, about 2.44 GB) are distributed with Git LFS. On a new computer, install Git LFS before cloning so the imagery is downloaded rather than leaving pointer files:
@@ -24,11 +26,30 @@ streamlit run app.py
 
 The app accepts a 13-band cloudy Sentinel-2 GeoTIFF in `B01, B02, B03, B04, B05, B06, B07, B08, B8A, B09, B10, B11, B12` order plus a co-registered two-band Sentinel-1 GeoTIFF in `VV, VH` order, with SAR values in dB. Both files must use the same pixel grid, CRS, and affine transform. The output retains the optical grid and has 13 bands. The UI supports file uploads, local paths, or the prepared paired-sample gallery.
 
-The pretrained checkpoint is intentionally not stored in Git. Follow [weights/README.md](weights/README.md) to obtain and convert the original authors' SAR + CARL checkpoint. Once it is available at `weights/dsen2cr_sar_carl.pth`, run the small integration check:
+The published SAR + CARL pretrained checkpoint is included in Git LFS at `weights/dsen2cr_sar_carl.pth`. It is the original authors' model converted to PyTorch, not a checkpoint trained by this project. The app reports when model or sample files are still Git LFS pointers and tells you to run `git lfs pull`. Its model selector also detects a separately trained local checkpoint at `weights/dsen2cr_sar_carl_trained.pth`.
+
+Run the checkpoint/inference check and the synthetic, one-epoch training smoke test after setup:
 
 ```sh
 python scripts/validate_sentinel_dsen2cr.py
+python scripts/validate_dsen2cr_training.py
 ```
+
+### Train the PyTorch Sentinel model
+
+The Sentinel inference path and training entry point use PyTorch only; TensorFlow is not required. The model matches the published 13-band Sentinel-2 + 2-band Sentinel-1 residual network. `train.py` implements the paired-data loader, released optical/SAR scaling, the upstream cloud/shadow mask heuristic, and CARL loss, with validation-loss checkpointing and resumable state. The default architecture, cloud threshold, input scaling, and learning rate follow the published setup; batch size defaults to 1 to reduce memory demand. This is a maintained PyTorch training workflow, not a claim of bit-for-bit equivalence to the historical TensorFlow/Keras runtime.
+
+Download the full SEN12MS-CR data/index from the [official dataset record](https://mediatum.ub.tum.de/1554803), then use its `datasetfilelist.csv` and extracted triplet folders:
+
+```powershell
+python train.py `
+  --manifest path\to\datasetfilelist.csv `
+  --data-root path\to\SEN12MS-CR `
+  --output weights\dsen2cr_sar_carl_trained.pth `
+  --epochs 8 --batch-size 1 --crop-size 128 --device auto
+```
+
+The listed splits `1` and `2` are used for training and validation; listed test split `3` is excluded. The run writes the best validation checkpoint, a `*_latest.pth` resume checkpoint, and an epoch history CSV. For the command above, resume with `--resume weights\dsen2cr_sar_carl_trained_latest.pth`. The project gallery contains only 96 train-split illustrations from one scene and no validation split, so it is not a training substitute and must not be used to claim generalization. Training is optional for the demo: the included published baseline is ready for inference.
 
 ### Prepare demo examples and the expanded local subset
 

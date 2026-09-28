@@ -1,6 +1,9 @@
 import torch
 import torch.nn as nn
 
+# Based on the upstream DSen2-CR PyTorch architecture by Patrick Ebel.
+# Modified for this project on 2026-09-29; distributed under GPL-3.0 (LICENSE).
+
 
 class DSen2CR(nn.Module):
     """
@@ -69,7 +72,9 @@ class ResBlock(nn.Module):
 
 
 def load_dsen2cr_weights(model, path, map_location="cpu"):
-    state = torch.load(path, map_location=map_location)
+    # State-dict checkpoints need only tensors and simple containers. Avoid
+    # pickle's arbitrary object loading for files supplied by other users.
+    state = torch.load(path, map_location=map_location, weights_only=True)
 
     if isinstance(state, dict) and "state_dict" in state:
         state = state["state_dict"]

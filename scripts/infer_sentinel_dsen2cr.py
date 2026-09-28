@@ -175,7 +175,8 @@ def run_inference(
         destination.write_mask(valid_map * 255)
         destination.descriptions = S2_BANDS
         destination.update_tags(
-            model="published DSen2-CR SAR+CARL checkpoint",
+            model="PyTorch DSen2-CR SAR-guided reconstruction",
+            checkpoint=checkpoint.name,
             optical_normalization="clip reflectance DN to 0..10000; divide by 2000",
             sar_normalization="clip VV to -25..0 dB, VH to -32.5..0 dB; scale to 0..2",
             band_order=",".join(S2_BANDS),

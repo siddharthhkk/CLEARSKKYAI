@@ -1,3 +1,4 @@
 weights/liss4_dsen2cr_synthetic.pth filter=lfs diff=lfs merge=lfs -text
 weights/liss4_dsen2cr_synthetic_v2.pth filter=lfs diff=lfs merge=lfs -text
+weights/dsen2cr_sar_carl.pth filter=lfs diff=lfs merge=lfs -text
 data/sentinel_demo/**/*.tif filter=lfs diff=lfs merge=lfs -text

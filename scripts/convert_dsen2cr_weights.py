@@ -147,7 +147,7 @@ def convert(src, dst):
 
     torch.save(model.state_dict(), dst)
 
-    print(f"✅ Converted DSen2-CR checkpoint")
+    print("Converted DSen2-CR checkpoint")
     print(f"   Input : {src}")
     print(f"   Output: {dst}")
     print("   Layers: 34 convolution layers")

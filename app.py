@@ -16,14 +16,32 @@ from rasterio.enums import Resampling
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 INFERENCE_SCRIPT = PROJECT_ROOT / "scripts" / "infer_sentinel_dsen2cr.py"
-CHECKPOINT = PROJECT_ROOT / "weights" / "dsen2cr_sar_carl.pth"
+PUBLISHED_CHECKPOINT = PROJECT_ROOT / "weights" / "dsen2cr_sar_carl.pth"
+TRAINED_CHECKPOINT = PROJECT_ROOT / "weights" / "dsen2cr_sar_carl_trained.pth"
 GALLERY_MANIFEST = PROJECT_ROOT / "data" / "sentinel_demo" / "manifest.csv"
 MAX_PREVIEW_EDGE = 900
 REFLECTANCE_MAX = 10000.0
 ERROR_PREVIEW_SCALE = 48.0
+GALLERY_LFS_PENDING = False
+
+
+def is_lfs_pointer(path: Path) -> bool:
+    if not path.is_file():
+        return False
+    try:
+        with path.open("rb") as stream:
+            return stream.read(128).startswith(b"version https://git-lfs.github.com/spec/v1")
+    except OSError:
+        return False
+
+
+def checkpoint_ready(path: Path) -> bool:
+    return path.is_file() and not is_lfs_pointer(path)
 
 
 def read_gallery() -> list[dict]:
+    global GALLERY_LFS_PENDING
+    GALLERY_LFS_PENDING = False
     if not GALLERY_MANIFEST.is_file():
         return []
     with GALLERY_MANIFEST.open(newline="", encoding="utf-8") as stream:
@@ -31,6 +49,16 @@ def read_gallery() -> list[dict]:
     for row in rows:
         for key in ("cloudy_s2", "sar_s1", "clear_target"):
             row[key] = (GALLERY_MANIFEST.parent / row[key]).resolve()
+    usable_rows = []
+    for row in rows:
+        paths = (row["cloudy_s2"], row["sar_s1"], row["clear_target"])
+        if any(is_lfs_pointer(path) for path in paths):
+            GALLERY_LFS_PENDING = True
+            continue
+        if any(not path.is_file() for path in paths):
+            continue
+        usable_rows.append(row)
+    rows = usable_rows
     rows.sort(
         key=lambda row: (
             0 if row.get("cloud_coverage_pct") else 1,
@@ -151,13 +179,13 @@ def compare_reference(cloudy_path: Path, output_path: Path, target_path: Path) -
     }
 
 
-def run_model(s2_path, sar_path, output_path, tile, overlap, device):
+def run_model(s2_path, sar_path, output_path, checkpoint, tile, overlap, device):
     command = [
         sys.executable,
         str(INFERENCE_SCRIPT),
         "--s2-cloudy", str(s2_path),
         "--s1-vv-vh", str(sar_path),
-        "--checkpoint", str(CHECKPOINT),
+        "--checkpoint", str(checkpoint),
         "--output", str(output_path),
         "--tile", str(tile),
         "--overlap", str(overlap),
@@ -192,11 +220,22 @@ def render_sidebar(cases: list[dict]):
         index=0 if cases else 1,
         key="input_mode",
     )
-    if CHECKPOINT.is_file():
-        st.sidebar.success("ClearSky-AI reconstruction model is ready")
+    checkpoint_options = {}
+    if checkpoint_ready(PUBLISHED_CHECKPOINT):
+        checkpoint_options["Published DSen2-CR pretrained weights"] = PUBLISHED_CHECKPOINT
+    if checkpoint_ready(TRAINED_CHECKPOINT):
+        checkpoint_options["Local PyTorch training run"] = TRAINED_CHECKPOINT
+    if checkpoint_options:
+        model_label = st.sidebar.selectbox("Reconstruction checkpoint", tuple(checkpoint_options))
+        checkpoint = checkpoint_options[model_label]
+        st.sidebar.success("Reconstruction checkpoint is ready")
         st.sidebar.info("Expected input: cloudy S2 + aligned S1 VV/VH → 13-band estimate")
     else:
-        st.sidebar.error("Model weights are missing. See the model setup notes in README.")
+        model_label = ""
+        checkpoint = PUBLISHED_CHECKPOINT
+        st.sidebar.error("Model weights are missing or still Git LFS pointers. Run `git lfs pull`.")
+    if GALLERY_LFS_PENDING:
+        st.sidebar.warning("Sample imagery is still stored as Git LFS pointers. Run `git lfs pull`.")
 
     cloudy_path = sar_path = target_path = None
     uploads = []
@@ -253,7 +292,10 @@ def render_sidebar(cases: list[dict]):
                     "Urban/built-up class label; this mirror does not identify a named city or preserve georeferencing."
                 )
         else:
-            st.sidebar.warning("No local gallery yet. Run `python scripts/prepare_sen12mscr_demo.py`.")
+            if GALLERY_LFS_PENDING:
+                st.sidebar.warning("Sample imagery needs Git LFS. Run `git lfs pull` from the repository root.")
+            else:
+                st.sidebar.warning("No local gallery yet. Run `python scripts/prepare_sen12mscr_demo.py`.")
     elif mode == "Upload raster pair":
         s2_upload = st.sidebar.file_uploader(
             "Cloudy Sentinel-2 · 13 bands", type=("tif", "tiff"), key="s2_upload"
@@ -293,7 +335,9 @@ def render_sidebar(cases: list[dict]):
             "[Meraner et al. (2020)](https://github.com/ameraner/dsen2-cr). The sample "
             "gallery is derived from the [SEN12MS-CR dataset](https://mediatum.ub.tum.de/1554803), "
             "licensed CC BY 4.0. ClearSky-AI provides the demo, input handling, and evaluation "
-            "workflow; it did not train or author those released weights."
+            "workflow; it did not train or author those released weights. This software is "
+            "distributed under GNU GPL-3.0, without warranty; see the repository `LICENSE` "
+            "and `THIRD_PARTY_NOTICES.md` for terms and attribution."
         )
     with st.sidebar.expander("Inference settings"):
         tile = st.select_slider("Tile size", options=(128, 256, 384, 512), value=256)
@@ -312,13 +356,15 @@ def render_sidebar(cases: list[dict]):
         "tile": tile,
         "overlap": overlap,
         "device": device,
+        "checkpoint": checkpoint,
+        "model_label": model_label,
         "run_clicked": run_clicked,
     }
 
 
 def run_selected_input(selection: dict) -> None:
-    if not CHECKPOINT.is_file():
-        st.error("Install the model weights as described in the model setup notes, then retry.")
+    if not checkpoint_ready(selection["checkpoint"]):
+        st.error("Model weights are missing or still Git LFS pointers. Install Git LFS and run `git lfs pull`.")
         return
     if selection["mode"] == "Upload raster pair":
         if any(upload is None for upload in selection["uploads"]):
@@ -343,6 +389,7 @@ def run_selected_input(selection: dict) -> None:
                 cloudy_path,
                 sar_path,
                 output_path,
+                selection["checkpoint"],
                 selection["tile"],
                 selection["overlap"],
                 selection["device"],
@@ -385,6 +432,7 @@ def run_selected_input(selection: dict) -> None:
         st.session_state["last_result"] = {
             "output": str(output_path),
             "input_name": selection["input_name"],
+            "model_label": selection["model_label"],
             "sample_note": selection["sample_note"],
             "sample": selection["selected"],
             "cloudy": previews[0],
@@ -433,6 +481,7 @@ def display_results(result: dict | None, current_input: str) -> None:
     st.caption(
         f"Scene: {result['width']:,} × {result['height']:,} px · {result['crs']}"
     )
+    st.caption(f"Checkpoint: {result['model_label']}")
     columns = st.columns(4, gap="small")
     headings = ("1. SAR (Radar)", "2. Cloudy Sentinel-2", "3. ClearSky-AI Estimate", "4. Clear Reference")
     images = (result["sar"], result["cloudy"], result["estimate"], result["target"])

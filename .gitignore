@@ -18,6 +18,7 @@ data/synthetic_pretrain_v3r_bhoonidhi_*/
 # Local model checkpoints
 weights/*.pth
 weights/*.hdf5
+!weights/dsen2cr_sar_carl.pth
 !weights/README.md
 
 # Temporary preview embeds
