@@ -6,6 +6,15 @@ This project owns the application, data preparation, and evaluation workflow—n
 
 ## Start here: Sentinel reconstruction demo
 
+The 1,060 paired demo samples (3,181 GeoTIFFs, about 2.44 GB) are distributed with Git LFS. On a new computer, install Git LFS before cloning so the imagery is downloaded rather than leaving pointer files:
+
+```sh
+git lfs install
+git clone https://github.com/siddharthhkk/CLEARSKKYAI.git
+cd CLEARSKKYAI
+git lfs pull
+```
+
 Install the project dependencies and launch the app:
 
 ```sh
@@ -23,9 +32,9 @@ python scripts/validate_sentinel_dsen2cr.py
 
 ### Prepare demo examples and the expanded local subset
 
-The official [SEN12MS-CR record](https://mediatum.ub.tum.de/1554803) describes 122,218 triplets and a 272 GB full download; the reorganized [Hugging Face mirror](https://huggingface.co/datasets/Hermanni/sen12mscr) is listed at 389 GB. You do not need either full download for this project. The default gallery is a quick 25-case demo. The expanded option reads the first 96 patches from each of ten held-out test scenes, spanning all four seasons, plus one train-split scene: 1,056 source triplets across eleven scenes. The resulting local GeoTIFF gallery occupies 2.44 GB (2.27 GiB) in this working copy; it contains 960 split-held-out test patches and 96 train-split illustrations, plus four curated challenge cases, for 1,060 paired examples total. Patch selections are not an independent dataset or a new benchmark.
+The official [SEN12MS-CR record](https://mediatum.ub.tum.de/1554803) describes 122,218 triplets and a 272 GB full download; the reorganized [Hugging Face mirror](https://huggingface.co/datasets/Hermanni/sen12mscr) is listed at 389 GB and carries a CC BY 4.0 license. You do not need either full download for this project. The default gallery is a quick 25-case demo. The expanded option reads the first 96 patches from each of ten held-out test scenes, spanning all four seasons, plus one train-split scene: 1,056 source triplets across eleven scenes. The checked-in Git LFS gallery occupies 2.44 GB (2.27 GiB); it contains 960 split-held-out test patches and 96 train-split illustrations, plus four curated challenge cases, for 1,060 paired examples total. Patch selections are not an independent dataset or a new benchmark.
 
-Three curated held-out examples have published cloud annotations (86.79–97.25% coverage); a fourth is labelled urban/built-up (IGBP class 13, 63.01% cloud coverage). Cloud values come from a public [SEN12MS-CR-derived annotation dataset](https://zenodo.org/records/17114706); the land-cover class comes from the original [SEN12MS labels](https://github.com/schmitt-muc/SEN12MS). The urban label is a land-cover category, not a verified city name. The mirror strips georeferencing, so these patches cannot currently be placed at a named city on a map. Source samples remain local under ignored `data/sentinel_demo/` and are not committed.
+Three curated held-out examples have published cloud annotations (86.79–97.25% coverage); a fourth is labelled urban/built-up (IGBP class 13, 63.01% cloud coverage). Cloud values come from a public [SEN12MS-CR-derived annotation dataset](https://zenodo.org/records/17114706); the land-cover class comes from the original [SEN12MS labels](https://github.com/schmitt-muc/SEN12MS). The urban label is a land-cover category, not a verified city name. The mirror strips georeferencing, so these patches cannot currently be placed at a named city on a map. The selected mirror samples are included under `data/sentinel_demo/` using Git LFS; the preparation script remains available to recreate the gallery from the public source.
 
 ```sh
 pip install fsspec pyarrow
