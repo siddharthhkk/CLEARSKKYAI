@@ -67,9 +67,16 @@ def read_sar_preview(path: Path) -> np.ndarray:
     return np.rint(gray[..., None] * 255).astype(np.uint8)
 
 
-def make_shared_previews(*images: np.ndarray) -> list[np.ndarray]:
+def make_shared_previews(
+    *images: np.ndarray, stretch_indices: tuple[int, ...] | None = None
+) -> list[np.ndarray]:
     finite_images = [np.nan_to_num(x, nan=0.0, posinf=REFLECTANCE_MAX, neginf=0.0) for x in images]
-    combined = np.concatenate([image.reshape(3, -1) for image in finite_images], axis=1)
+    stretch_images = (
+        [finite_images[index] for index in stretch_indices]
+        if stretch_indices is not None
+        else finite_images
+    )
+    combined = np.concatenate([image.reshape(3, -1) for image in stretch_images], axis=1)
     low, high = np.percentile(combined, (2, 98), axis=1)
     high = np.maximum(high, low + 1.0)
     output = []
@@ -300,7 +307,10 @@ def run_selected_input(selection: dict) -> None:
             inputs = [cloudy_raw, output_raw]
             if target_raw is not None:
                 inputs.append(target_raw)
-            previews = make_shared_previews(*inputs)
+            previews = make_shared_previews(
+                *inputs,
+                stretch_indices=(1, 2) if target_raw is not None else None,
+            )
             sar_preview = read_sar_preview(sar_path)
             if target_raw is not None:
                 difference = difference_preview(previews[1], previews[2])
