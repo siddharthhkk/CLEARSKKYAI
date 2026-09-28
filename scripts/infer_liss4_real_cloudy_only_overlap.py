@@ -1,4 +1,5 @@
 import argparse
+from contextlib import ExitStack
 import os
 import sys
 import tempfile
@@ -16,6 +17,56 @@ if SRC_DIR not in sys.path:
 
 from liss4 import normalize_liss4
 from liss4_dsen2cr import LISS4DSen2CR
+
+
+class ThreeBandStack:
+    """Windowed view over separate single-band [Green, Red, NIR] rasters."""
+
+    def __init__(self, datasets, paths):
+        if len(datasets) != 3:
+            raise ValueError("Exactly three single-band input files are required.")
+        reference = datasets[0]
+        for index, (name, dataset) in enumerate(
+            zip(("BAND2/Green", "BAND3/Red", "BAND4/NIR"), datasets)
+        ):
+            if dataset.count != 1:
+                raise ValueError(f"{name} input must contain exactly one band.")
+            same_shape = (dataset.height, dataset.width) == (
+                reference.height,
+                reference.width,
+            )
+            same_grid = (
+                dataset.crs == reference.crs
+                and dataset.transform == reference.transform
+                and np.allclose(dataset.res, reference.res, atol=1e-6)
+            )
+            if not same_shape or not same_grid:
+                raise ValueError(
+                    f"Separate LISS-IV bands must share an identical grid; "
+                    f"misaligned input: {name} ({paths[index]})"
+                )
+
+        self.datasets = datasets
+        self.width = reference.width
+        self.height = reference.height
+        self.count = 3
+        self.name = ", ".join(paths)
+        self.profile = reference.profile.copy()
+        self.profile.update(count=3)
+        self.descriptions = ("Green", "Red", "NIR")
+        self.units = tuple(dataset.units[0] for dataset in datasets)
+
+    def read(self, indexes, window):
+        bands = [
+            self.datasets[int(index) - 1].read(1, window=window)
+            for index in indexes
+        ]
+        return np.stack(bands, axis=0)
+
+    def tags(self, band_index=None):
+        if band_index is None:
+            return {}
+        return self.datasets[band_index - 1].tags(1)
 
 
 def make_weight(h, w):
@@ -168,7 +219,14 @@ def main():
         "--checkpoint",
         default="weights/liss4_dsen2cr_synthetic_v3r.pth",
     )
-    ap.add_argument("--cloudy", required=True)
+    input_group = ap.add_mutually_exclusive_group(required=True)
+    input_group.add_argument("--cloudy", help="Stacked three-band [G,R,NIR] GeoTIFF.")
+    input_group.add_argument(
+        "--cloudy-bands",
+        nargs=3,
+        metavar=("BAND2_GREEN", "BAND3_RED", "BAND4_NIR"),
+        help="Three co-registered single-band files in [Green, Red, NIR] order.",
+    )
     ap.add_argument("--output", required=True)
     ap.add_argument("--dn-max", type=float, default=1023.0)
     ap.add_argument("--tile", type=int, default=256)
@@ -195,10 +253,16 @@ def main():
     if args.dn_max > np.iinfo(np.uint16).max:
         raise ValueError("--dn-max must fit the uint16 output range (<= 65535).")
 
-    input_path = os.path.abspath(args.cloudy)
+    input_paths = [
+        os.path.abspath(path)
+        for path in ([args.cloudy] if args.cloudy else args.cloudy_bands)
+    ]
+    if args.cloudy_bands and len({os.path.normcase(p) for p in input_paths}) != 3:
+        raise ValueError("--cloudy-bands must refer to three distinct files.")
+    input_label = ", ".join(input_paths)
     output_path = os.path.abspath(args.output)
-    if os.path.normcase(input_path) == os.path.normcase(output_path):
-        raise ValueError("--output must not overwrite the cloudy input GeoTIFF.")
+    if any(os.path.normcase(path) == os.path.normcase(output_path) for path in input_paths):
+        raise ValueError("--output must not overwrite any cloudy input GeoTIFF.")
     if os.path.isdir(output_path):
         raise ValueError("--output must name a file, not a directory.")
 
@@ -214,7 +278,16 @@ def main():
     os.close(temp_fd)
 
     try:
-        with rasterio.open(input_path) as src:
+        with ExitStack() as input_stack:
+            if args.cloudy:
+                src = input_stack.enter_context(rasterio.open(input_paths[0]))
+            else:
+                band_datasets = [
+                    input_stack.enter_context(rasterio.open(path))
+                    for path in input_paths
+                ]
+                src = ThreeBandStack(band_datasets, input_paths)
+
             if src.count != 3:
                 raise ValueError(
                     f"Expected 3-band LISS-IV GeoTIFF, got {src.count} bands."
@@ -270,7 +343,7 @@ def main():
     print(f"Checkpoint : {os.path.abspath(args.checkpoint)}")
     if "epoch" in checkpoint:
         print(f"Epoch      : {checkpoint['epoch']}")
-    print(f"Input      : {input_path}")
+    print(f"Input      : {input_label}")
     print(f"Output     : {output_path}")
     print(f"Size       : {width} x {height}")
     print(f"Tile       : {args.tile} px")

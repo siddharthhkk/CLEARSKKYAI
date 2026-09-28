@@ -56,6 +56,18 @@ python scripts/infer_liss4_real_cloudy_only_overlap.py \
 
 The inference command accepts `auto`, `cpu`, or `cuda`. It writes a georeferenced `uint16` GeoTIFF, keeps the source CRS/transform and band labels, and processes overlapping tiles with a rolling tile-row buffer rather than loading the full scene into float arrays. Memory still grows with the input image width and tile size. No clear reference is used during inference.
 
+For products delivered as three separate, co-registered single-band files, pass the files in Green, Red, NIR order (typically `BAND2`, `BAND3`, `BAND4`) instead of creating a stacked intermediate:
+
+```sh
+python scripts/infer_liss4_real_cloudy_only_overlap.py \
+  --checkpoint weights/liss4_dsen2cr_synthetic_v3r.pth \
+  --cloudy-bands path/to/BAND2.tif path/to/BAND3.tif path/to/BAND4.tif \
+  --output data/eval/reconstructed.tif \
+  --tile 256 --overlap 64 --device auto
+```
+
+The three input grids must match. Larger overlap can reduce tile seams, at a substantial runtime cost; inspect a preview on unfamiliar, cloud-heavy scenes. Without a clear reference, this remains a qualitative reconstruction, not an accuracy evaluation.
+
 The checkpoint and imagery are intentionally excluded from Git. On a fresh clone, put a checkpoint at the path above or train one locally as described below; do not expect GitHub to contain the ignored local weights or data.
 
 ## Prepare training data from a local clear GeoTIFF
@@ -125,7 +137,7 @@ Pair-specific commands are available in each script's `--help`. Cloudiness compa
 
 ## Data and model contract
 
-- Supply a stacked three-band GeoTIFF in `[Green, Red, NIR]` order.
+- Supply either a stacked three-band GeoTIFF or three co-registered single-band files in `[Green, Red, NIR]` order.
 - Native LISS-IV processing uses one fixed `dn_max=1023`; per-image min/max normalization is intentionally avoided.
 - Inspect unfamiliar products with `scripts/inspect_liss4.py` before inference or training.
 - Train/clear pairs must be co-registered on an identical grid. The paired dataset loader rejects grid mismatches.

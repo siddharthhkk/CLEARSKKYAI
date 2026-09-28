@@ -40,6 +40,15 @@ def main():
             for index, name in enumerate(("Green", "Red", "NIR"), start=1):
                 dst.set_band_description(index, name)
 
+        band_paths = [os.path.join(temp, f"band{index}.tif") for index in (2, 3, 4)]
+        band_profile = profile.copy()
+        band_profile["count"] = 1
+        for index, (path, band_name) in enumerate(zip(band_paths, ("Green", "Red", "NIR"))):
+            with rasterio.open(path, "w", **band_profile) as dst:
+                dst.write(image[index:index + 1])
+                dst.set_band_description(1, band_name)
+                dst.update_tags(1, source_band=f"BAND{index + 2}")
+
         model = LISS4DSen2CR(features=8, blocks=1, res_scale=0.1, use_sar=False)
         torch.save(
             {
@@ -91,6 +100,26 @@ def main():
             assert reconstructed.min() >= 0
             assert reconstructed.max() <= 1023
 
+        stacked_bands_output = os.path.join(temp, "out", "separate_bands.tif")
+        band_command = command.copy()
+        cloudy_index = band_command.index("--cloudy")
+        band_command[cloudy_index:cloudy_index + 2] = ["--cloudy-bands", *band_paths]
+        band_command[band_command.index("--output") + 1] = stacked_bands_output
+        band_result = subprocess.run(
+            band_command,
+            check=True,
+            capture_output=True,
+            text=True,
+            cwd=PROJECT_ROOT,
+        )
+        assert "Input      : " in band_result.stdout
+        with rasterio.open(stacked_bands_output) as output:
+            separate_result = output.read()
+            assert output.descriptions == ("Green", "Red", "NIR")
+            for index in range(1, 4):
+                assert output.tags(index)["source_band"] == f"BAND{index + 1}"
+        assert np.array_equal(reconstructed, separate_result)
+
         overwrite = subprocess.run(
             command[:command.index("--output")]
             + ["--output", source_path]
@@ -127,9 +156,29 @@ def main():
         with open(protected_output, "rb") as f:
             assert f.read() == protected_contents
 
+        misaligned_band = os.path.join(temp, "misaligned_band4.tif")
+        misaligned_profile = band_profile.copy()
+        misaligned_profile["transform"] = from_origin(500005, 3000000, 5, 5)
+        with rasterio.open(misaligned_band, "w", **misaligned_profile) as dst:
+            dst.write(image[2:3])
+        misaligned_command = band_command.copy()
+        misaligned_command[misaligned_command.index("--cloudy-bands") + 3] = misaligned_band
+        misaligned_command[misaligned_command.index("--output") + 1] = protected_output
+        misaligned = subprocess.run(
+            misaligned_command,
+            capture_output=True,
+            text=True,
+            cwd=PROJECT_ROOT,
+        )
+        assert misaligned.returncode != 0
+        assert "identical grid" in misaligned.stderr
+        with open(protected_output, "rb") as f:
+            assert f.read() == protected_contents
+
     print("PASS overlap-tiled inference smoke test (CPU, small checkpoint)")
     print("PASS GeoTIFF dimensions, CRS, transform, band descriptions, tags, and DN range")
-    print("PASS input-overwrite and invalid-input output-preservation guards")
+    print("PASS stacked and separate-band inputs produce identical predictions")
+    print("PASS input-overwrite, grid-validation, and output-preservation guards")
 
 
 if __name__ == "__main__":
