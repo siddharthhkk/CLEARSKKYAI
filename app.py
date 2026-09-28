@@ -1,4 +1,4 @@
-"""Four-panel Streamlit demo for published Sentinel DSen2-CR."""
+"""ClearSky-AI demo for SAR-guided Sentinel-2 cloud reconstruction."""
 
 from __future__ import annotations
 
@@ -30,6 +30,16 @@ def read_gallery() -> list[dict]:
     for row in rows:
         for key in ("cloudy_s2", "sar_s1", "clear_target"):
             row[key] = (GALLERY_MANIFEST.parent / row[key]).resolve()
+    rows.sort(
+        key=lambda row: (
+            0 if row.get("cloud_coverage_pct") else 1,
+            -float(row["cloud_coverage_pct"]) if row.get("cloud_coverage_pct") else 0.0,
+            0 if row["split"].lower() == "test" else 1,
+            row["season"],
+            row["scene"],
+            row["patch"],
+        )
+    )
     return rows
 
 
@@ -166,7 +176,7 @@ def readable_case(row: dict) -> str:
 
 def render_sidebar(cases: list[dict]):
     st.sidebar.title("🕹️ Control Panel")
-    gallery_mode = "Prepared SEN12MS-CR gallery"
+    gallery_mode = "Prepared paired sample gallery"
     mode = st.sidebar.radio(
         "Input mode",
         (gallery_mode, "Upload raster pair", "Use local file paths"),
@@ -174,10 +184,10 @@ def render_sidebar(cases: list[dict]):
         key="input_mode",
     )
     if CHECKPOINT.is_file():
-        st.sidebar.success("Loaded published DSen2-CR SAR + CARL weights")
+        st.sidebar.success("ClearSky-AI reconstruction model is ready")
         st.sidebar.info("Expected input: cloudy S2 + aligned S1 VV/VH → 13-band estimate")
     else:
-        st.sidebar.error("Checkpoint missing: weights/dsen2cr_sar_carl.pth")
+        st.sidebar.error("Model weights are missing. See the model setup notes in README.")
 
     cloudy_path = sar_path = target_path = None
     uploads = []
@@ -190,16 +200,35 @@ def render_sidebar(cases: list[dict]):
             train_count = sum(row["split"].lower() == "train" for row in cases)
             test_count = len(cases) - train_count
             st.sidebar.success(
-                f"Loaded {len(cases)} paired samples · {test_count} test · {train_count} train demo"
+                f"Loaded {len(cases)} paired patches · {test_count} held-out · {train_count} train-split demo"
             )
+            split_filter = st.sidebar.selectbox(
+                "Sample split",
+                ("Held-out test scenes", "Training-split illustration", "All samples"),
+                index=0,
+            )
+            if split_filter == "Held-out test scenes":
+                filtered_cases = [row for row in cases if row["split"].lower() != "train"]
+            elif split_filter == "Training-split illustration":
+                filtered_cases = [row for row in cases if row["split"].lower() == "train"]
+            else:
+                filtered_cases = cases
+            seasons = sorted({row["season"].title() for row in filtered_cases})
+            season_filter = st.sidebar.selectbox("Season", ("All seasons", *seasons))
+            if season_filter != "All seasons":
+                filtered_cases = [
+                    row for row in filtered_cases if row["season"].title() == season_filter
+                ]
+            sample_by_id = {row["sample_id"]: row for row in filtered_cases}
+            if st.session_state.get("gallery_sample") not in sample_by_id:
+                st.session_state["gallery_sample"] = next(iter(sample_by_id))
             selected_id = st.sidebar.selectbox(
-                "Select real-cloud sample",
-                [row["sample_id"] for row in cases],
-                format_func=lambda sample_id: readable_case(
-                    next(row for row in cases if row["sample_id"] == sample_id)
-                ),
+                "Select paired sample",
+                list(sample_by_id),
+                format_func=lambda sample_id: readable_case(sample_by_id[sample_id]),
+                key="gallery_sample",
             )
-            selected = next(row for row in cases if row["sample_id"] == selected_id)
+            selected = sample_by_id[selected_id]
             cloudy_path = selected["cloudy_s2"]
             sar_path = selected["sar_s1"]
             target_path = selected["clear_target"]
@@ -249,6 +278,14 @@ def render_sidebar(cases: list[dict]):
             "Meeting the input contract is necessary, not a quality guarantee: the model can "
             "leave cloud artifacts or alter surface detail on unfamiliar scenes."
         )
+    with st.sidebar.expander("Model and data attribution", expanded=False):
+        st.markdown(
+            "The reconstruction weights are a published SAR-guided model checkpoint by "
+            "[Meraner et al. (2020)](https://github.com/ameraner/dsen2-cr). The sample "
+            "gallery is derived from the [SEN12MS-CR dataset](https://mediatum.ub.tum.de/1554803), "
+            "licensed CC BY 4.0. ClearSky-AI provides the demo, input handling, and evaluation "
+            "workflow; it did not train or author those released weights."
+        )
     with st.sidebar.expander("Inference settings"):
         tile = st.select_slider("Tile size", options=(128, 256, 384, 512), value=256)
         overlap = st.slider("Tile overlap (pixels)", 0, tile - 1, min(32, tile - 1))
@@ -272,7 +309,7 @@ def render_sidebar(cases: list[dict]):
 
 def run_selected_input(selection: dict) -> None:
     if not CHECKPOINT.is_file():
-        st.error("Download and convert the published checkpoint first; see `weights/README.md`.")
+        st.error("Install the model weights as described in the model setup notes, then retry.")
         return
     if selection["mode"] == "Upload raster pair":
         if any(upload is None for upload in selection["uploads"]):
@@ -290,9 +327,9 @@ def run_selected_input(selection: dict) -> None:
         if selection["mode"] == "Upload raster pair":
             cloudy_path = stage_upload(selection["uploads"][0], work / "cloudy_s2.tif")
             sar_path = stage_upload(selection["uploads"][1], work / "sar_s1.tif")
-        output_path = work / "dsen2cr_reconstruction.tif"
+        output_path = work / "clearsky_reconstruction.tif"
 
-        with st.spinner("Checking the grids and running the published 13-band model…"):
+        with st.spinner("Checking the grids and running the 13-band reconstruction model…"):
             completed = run_model(
                 cloudy_path,
                 sar_path,
@@ -353,7 +390,7 @@ def run_selected_input(selection: dict) -> None:
         st.error("Reconstruction failed. Check the band order, units, checkpoint, and co-registration.")
         st.code("\n".join(lines[-18:]))
     except Exception as exc:
-        st.error(f"Could not run DSen2-CR: {exc}")
+        st.error(f"Could not complete the reconstruction: {exc}")
     finally:
         if run_directory is not None:
             run_directory.cleanup()
@@ -369,10 +406,10 @@ def display_results(result: dict | None, current_input: str) -> None:
         "</style>",
         unsafe_allow_html=True,
     )
-    st.title("🛰️ ClearSky-AI: SAR–Optical Cloud Removal")
+    st.title("🛰️ ClearSky-AI: SAR–Optical Cloud Reconstruction")
     st.caption(
-        "Multimodal reconstruction · Published DSen2-CR checkpoint · "
-        "SEN12MS-CR offline demo gallery"
+        "Sentinel-1-guided Sentinel-2 reconstruction · Paired reference evaluation · "
+        "ClearSky-AI demo gallery"
     )
 
     if result is None or result["input_name"] != current_input:
@@ -380,16 +417,15 @@ def display_results(result: dict | None, current_input: str) -> None:
         return
 
     st.caption(
-        f"Scene: {result['width']:,} × {result['height']:,} px · {result['crs']} · "
-        f"checkpoint `dsen2cr_sar_carl.pth`"
+        f"Scene: {result['width']:,} × {result['height']:,} px · {result['crs']}"
     )
     columns = st.columns(4, gap="small")
-    headings = ("1. SAR (Radar)", "2. Real Cloudy S2", "3. DSen2-CR Output", "4. Cloud-free S2")
+    headings = ("1. SAR (Radar)", "2. Cloudy Sentinel-2", "3. ClearSky-AI Estimate", "4. Clear Reference")
     images = (result["sar"], result["cloudy"], result["estimate"], result["target"])
     descriptions = (
         "Sentinel-1 VV backscatter",
         "Genuine cloudy Sentinel-2 observation",
-        "Published SAR-guided reconstruction",
+        "SAR-guided reconstruction estimate",
         "Paired clear reference" if result["target"] is not None else "No reference supplied",
     )
     for column, heading, image, caption in zip(columns, headings, images, descriptions):
@@ -431,12 +467,12 @@ def display_results(result: dict | None, current_input: str) -> None:
     else:
         top = metrics_col.columns(3)
         top[0].metric("Cloudy Input PSNR", f"{metrics['cloudy']['PSNR']:.2f} dB")
-        top[1].metric("DSen2-CR PSNR", f"{metrics['output']['PSNR']:.2f} dB")
+        top[1].metric("Reconstruction PSNR", f"{metrics['output']['PSNR']:.2f} dB")
         gain = metrics["output"]["PSNR"] - metrics["cloudy"]["PSNR"]
         top[2].metric("PSNR Gain", f"{gain:+.2f} dB")
         bottom = metrics_col.columns(2)
         bottom[0].metric("Cloudy Input MAE", f"{metrics['cloudy']['MAE']:.4f}")
-        bottom[1].metric("DSen2-CR MAE", f"{metrics['output']['MAE']:.4f}")
+        bottom[1].metric("Reconstruction MAE", f"{metrics['output']['MAE']:.4f}")
         st.caption(
             "Metrics use all 13 bands, reflectance normalized to 0–1. The clear reference is "
             "co-registered but may be from another date; treat these as paired-reference scores, "
@@ -446,7 +482,7 @@ def display_results(result: dict | None, current_input: str) -> None:
     st.download_button(
         "Download reconstructed 13-band GeoTIFF",
         data=lambda: Path(result["output"]).read_bytes(),
-        file_name="dsen2cr_sentinel2_reconstruction.tif",
+        file_name="clearsky_sentinel2_reconstruction.tif",
         mime="image/tiff",
         type="primary",
     )
@@ -457,7 +493,7 @@ def display_results(result: dict | None, current_input: str) -> None:
 
 
 def main() -> None:
-    st.set_page_config(page_title="ClearSky-AI · DSen2-CR", page_icon="🛰️", layout="wide")
+    st.set_page_config(page_title="ClearSky-AI · Sentinel Reconstruction", page_icon="🛰️", layout="wide")
     cases = read_gallery()
     selection = render_sidebar(cases)
     if selection["run_clicked"]:

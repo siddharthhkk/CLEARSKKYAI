@@ -89,6 +89,7 @@ def run_inference(
     tile: int = 256,
     overlap: int = 32,
     device_name: str = "auto",
+    model: DSen2CR | None = None,
 ) -> dict:
     if tile < 32:
         raise ValueError("Tile size must be at least 32 pixels.")
@@ -102,8 +103,11 @@ def run_inference(
 
     info = validate_rasters(s2_path, sar_path)
     device = choose_device(device_name)
-    model = DSen2CR().to(device)
-    load_dsen2cr_weights(model, str(checkpoint), map_location=device)
+    if model is None:
+        model = DSen2CR().to(device)
+        load_dsen2cr_weights(model, str(checkpoint), map_location=device)
+    else:
+        model = model.to(device)
     model.eval()
 
     height, width = info["height"], info["width"]

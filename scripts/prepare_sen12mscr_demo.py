@@ -88,19 +88,36 @@ def fetch_rows(season: str, scene: int, row_indices: tuple[int, ...]):
 
     relative = f"{season}/scene_{scene}.parquet"
     url = f"{MIRROR_ROOT}/{relative}?download=true"
-    print(f"Reading first compressed Parquet row group: {relative}", flush=True)
+    print(f"Reading requested compressed Parquet row groups: {relative}", flush=True)
     filesystem = fsspec.filesystem("https", block_size=16 * 1024 * 1024)
     with filesystem.open(url, "rb") as remote_file:
         parquet = pq.ParquetFile(remote_file)
         if parquet.metadata.num_row_groups < 1:
             raise RuntimeError(f"No rows found in {relative}.")
-        table = parquet.read_row_group(0)
-    if table.num_rows <= max(row_indices):
-        raise RuntimeError(
-            f"The first row group in {relative} contains {table.num_rows} rows, "
-            f"but patch index {max(row_indices)} was requested."
-        )
-    return {index: table.slice(index, 1).to_pylist()[0] for index in row_indices}
+        ranges = []
+        group_start = 0
+        for group_index in range(parquet.metadata.num_row_groups):
+            group_stop = group_start + parquet.metadata.row_group(group_index).num_rows
+            ranges.append((group_start, group_stop))
+            group_start = group_stop
+        if max(row_indices) >= group_start:
+            raise RuntimeError(
+                f"{relative} contains {group_start} rows, "
+                f"but patch index {max(row_indices)} was requested."
+            )
+        selected = {}
+        for group_index, (start, stop) in enumerate(ranges):
+            in_group = [index for index in row_indices if start <= index < stop]
+            if not in_group:
+                continue
+            table = parquet.read_row_group(group_index)
+            selected.update(
+                {
+                    index: table.slice(index - start, 1).to_pylist()[0]
+                    for index in in_group
+                }
+            )
+    return selected
 
 
 def fetch_patches(season: str, scene: int, patch_ids: tuple[str, ...]) -> dict[str, tuple[int, dict]]:
@@ -242,6 +259,14 @@ def main() -> None:
         help="Prepare four patches per test scene instead of two (45 cases total including curated cases).",
     )
     parser.add_argument(
+        "--volume",
+        action="store_true",
+        help=(
+            "Prepare the first 96 patches from each of the ten held-out test scenes plus "
+            "96 train-split examples (about 1,060 gallery cases including curated patches)."
+        ),
+    )
+    parser.add_argument(
         "--overwrite", action="store_true", help="Replace existing selected sample files."
     )
     args = parser.parse_args()
@@ -253,8 +278,13 @@ def main() -> None:
         with old_manifest_path.open(newline="", encoding="utf-8") as stream:
             old_manifest = {row["sample_id"]: row for row in csv.DictReader(stream)}
 
-    scene_requests = [(TRAIN_SCENE[0], TRAIN_SCENE[1], TRAIN_SCENE[2], TRAIN_SCENE[3])]
-    test_rows = EXPANDED_TEST_ROWS if args.all_test else DEFAULT_TEST_ROWS
+    if args.volume and args.all_test:
+        parser.error("Use either --volume or --all-test, not both.")
+    train_rows = tuple(range(96)) if args.volume else TRAIN_SCENE[3]
+    scene_requests = [(TRAIN_SCENE[0], TRAIN_SCENE[1], TRAIN_SCENE[2], train_rows)]
+    test_rows = tuple(range(96)) if args.volume else (
+        EXPANDED_TEST_ROWS if args.all_test else DEFAULT_TEST_ROWS
+    )
     scene_requests.extend(
         (split, season, scene, test_rows) for split, season, scene in TEST_SCENES
     )

@@ -1,10 +1,10 @@
-# ClearSky-AI: Sentinel-2 cloud reconstruction with DSen2-CR
+# ClearSky-AI: Sentinel-2 cloud reconstruction
 
-ClearSky-AI is a personal remote-sensing research project. Its primary demo now uses the published SAR-fusion DSen2-CR checkpoint: cloudy Sentinel-2 optical data plus co-registered Sentinel-1 VV/VH radar in, a 13-band Sentinel-2 estimate out. This replaces the earlier LISS-IV-centered problem statement for the main demo; the LISS-IV experiments and app remain preserved as a separate research track.
+ClearSky-AI is a personal remote-sensing research project. Its primary demo takes cloudy Sentinel-2 optical data plus co-registered Sentinel-1 VV/VH radar and produces a 13-band Sentinel-2 estimate. The demo integrates the published SAR + CARL checkpoint by Meraner et al. (2020); it is not a ClearSky-AI-trained model. The earlier LISS-IV experiments and app remain preserved as a separate research track.
 
-This is an integration and evaluation of an existing pretrained model, not a claim that this project trained the released DSen2-CR checkpoint. Results are estimates and can hallucinate or miss surface detail hidden by clouds. See [PROBLEM_STATEMENT.md](PROBLEM_STATEMENT.md) for the revised objective, input contract, evaluation plan, and limitations.
+This project owns the application, data preparation, and evaluation workflow—not the pretrained weights or their original architecture. Results are estimates and can hallucinate or miss surface detail hidden by clouds. See [PROBLEM_STATEMENT.md](PROBLEM_STATEMENT.md) for the objective, input contract, evaluation plan, and limitations.
 
-## Start here: Sentinel DSen2-CR demo
+## Start here: Sentinel reconstruction demo
 
 Install the project dependencies and launch the app:
 
@@ -13,17 +13,19 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-The app accepts a 13-band cloudy Sentinel-2 GeoTIFF in `B01, B02, B03, B04, B05, B06, B07, B08, B8A, B09, B10, B11, B12` order plus a co-registered two-band Sentinel-1 GeoTIFF in `VV, VH` order, with SAR values in dB. Both files must use the same pixel grid, CRS, and affine transform. The output retains the optical grid and has 13 bands. The UI can use file uploads, local paths, or the prepared SEN12MS-CR gallery.
+The app accepts a 13-band cloudy Sentinel-2 GeoTIFF in `B01, B02, B03, B04, B05, B06, B07, B08, B8A, B09, B10, B11, B12` order plus a co-registered two-band Sentinel-1 GeoTIFF in `VV, VH` order, with SAR values in dB. Both files must use the same pixel grid, CRS, and affine transform. The output retains the optical grid and has 13 bands. The UI supports file uploads, local paths, or the prepared paired-sample gallery.
 
-The published checkpoint is intentionally not stored in Git. Follow [weights/README.md](weights/README.md) to obtain and convert the original authors' SAR + CARL checkpoint. Once it is available at `weights/dsen2cr_sar_carl.pth`, run the small integration check:
+The pretrained checkpoint is intentionally not stored in Git. Follow [weights/README.md](weights/README.md) to obtain and convert the original authors' SAR + CARL checkpoint. Once it is available at `weights/dsen2cr_sar_carl.pth`, run the small integration check:
 
 ```sh
 python scripts/validate_sentinel_dsen2cr.py
 ```
 
-### Prepare demo examples
+### Prepare demo examples and the expanded local subset
 
-The complete official [SEN12MS-CR download](https://mediatum.ub.tum.de/1554803) is 272 GB. Instead, the optional gallery script reads selected row groups from the public, reorganized [Hugging Face mirror](https://huggingface.co/datasets/Hermanni/sen12mscr). The default gallery contains 20 standard test patches (two per held-out scene), three additional held-out cloud challenges annotated at 86.79–97.25% cloud coverage, one held-out urban/built-up patch (IGBP class 13; 63.01% cloud coverage), and one train-split example: 25 cases total. The cloud values come from a public [SEN12MS-CR-derived annotation dataset](https://zenodo.org/records/17114706); the land-cover class comes from the original [SEN12MS labels](https://github.com/schmitt-muc/SEN12MS). The urban label is a land-cover category, not a verified city name. The mirror strips georeferencing, so these examples cannot currently be placed at a named city on a map. The script reads only the row groups needed for selected examples and does not unpack the complete archive:
+The official [SEN12MS-CR record](https://mediatum.ub.tum.de/1554803) describes 122,218 triplets and a 272 GB full download; the reorganized [Hugging Face mirror](https://huggingface.co/datasets/Hermanni/sen12mscr) is listed at 389 GB. You do not need either full download for this project. The default gallery is a quick 25-case demo. The expanded option reads the first 96 patches from each of ten held-out test scenes, spanning all four seasons, plus one train-split scene: 1,056 source triplets across eleven scenes. The resulting local GeoTIFF gallery occupies 2.44 GB (2.27 GiB) in this working copy; it contains 960 split-held-out test patches and 96 train-split illustrations, plus four curated challenge cases, for 1,060 paired examples total. Patch selections are not an independent dataset or a new benchmark.
+
+Three curated held-out examples have published cloud annotations (86.79–97.25% coverage); a fourth is labelled urban/built-up (IGBP class 13, 63.01% cloud coverage). Cloud values come from a public [SEN12MS-CR-derived annotation dataset](https://zenodo.org/records/17114706); the land-cover class comes from the original [SEN12MS labels](https://github.com/schmitt-muc/SEN12MS). The urban label is a land-cover category, not a verified city name. The mirror strips georeferencing, so these patches cannot currently be placed at a named city on a map. Source samples remain local under ignored `data/sentinel_demo/` and are not committed.
 
 ```sh
 pip install fsspec pyarrow
@@ -31,13 +33,22 @@ python scripts/prepare_sen12mscr_demo.py
 python scripts/evaluate_sen12mscr_demo.py
 ```
 
-The app shows SAR, cloudy optical input, model output, and clear reference, with reference comparison metrics. Curated challenge cards show their published cloud percentages and, for the urban case, the IGBP class label. The clear sample is co-registered, but it may not be a same-time observation or perfect ground truth. `python scripts/prepare_sen12mscr_demo.py --all-test` adds two more patches per test scene (45 cases total, including curated cases). Source imagery is local under ignored `data/sentinel_demo/` and is not committed. Each downloaded sample contains 256×256 pixel arrays but no geospatial transform in the mirror, so these are patch demonstrations, not map-ready products.
+For the expanded 2–3 GB subset and 1,060 paired patches, run:
+
+```sh
+python scripts/prepare_sen12mscr_demo.py --volume
+python scripts/evaluate_sen12mscr_demo.py
+```
+
+The app shows SAR, cloudy optical input, reconstruction, and paired clear reference with per-patch comparison metrics. Use the sidebar split and season filters to browse held-out scenes separately from train-split illustrations; curated high-cloud and urban/built-up cases appear first. The clear sample is co-registered, but may not be a same-time observation or perfect ground truth. `--all-test` remains a smaller 45-case option. Samples are 256×256 patches with no geospatial transform in this mirror, not map-ready products.
 
 Each case folder contains `cloudy_s2.tif` (13 optical bands), `sar_s1_vv_vh.tif` (two SAR bands), and `clear_s2_reference.tif` (paired target); `data/sentinel_demo/manifest.csv` records the split, season, scene, and relative paths.
 
-Labels are intentionally precise: the train case comes from the dataset's train split and demonstrates the checkpoint's training-data family, but does not prove that the exact patch was used to fit the released weights. Test cases are from all ten scenes in the dataset's published test split, absent from its listed training scenes; they are held-out examples from the same dataset, not an independent external dataset. Don't report a training-split score as held-out accuracy.
+Labels are intentionally precise: the train-split examples demonstrate the model's training-data family, but do not prove that each exact patch appeared in the released checkpoint's training run. Test examples are from the dataset's ten published test scenes, absent from its listed training scenes; they are held-out examples from the same dataset, not an independent external dataset. Don't report a training-split score as held-out accuracy.
 
-The current 24-patch held-out run reports mean per-patch PSNR of 17.64 dB for the cloudy input and 28.39 dB for the model output (+10.75 dB mean gain); PSNR improved on 24/24 patches. Mean output MAE is 0.02985 and RMSE 0.04267 (reflectance normalized to 0–1). Individual output PSNR ranges from 20.70 to 36.40 dB, so results still vary meaningfully by patch. These are unweighted means of patch-level metrics, not a pooled full-dataset benchmark. The three heavy-cloud cases and urban/built-up case score as follows:
+The expanded 1,060-case run completed on the local pretrained checkpoint. Across the 964 test-split patches, mean per-patch PSNR was 17.25 dB for cloudy input and 27.65 dB for reconstruction (+10.40 dB mean gain); 960/964 patches improved. Mean output MAE was 0.03130 and RMSE 0.04527 (reflectance normalized to 0–1); output PSNR ranged from 18.50 to 44.18 dB. The four non-improving cases were all in summer scene 119, with PSNR changes from -0.27 to -0.71 dB. These are unweighted means of patch-level metrics, not a pooled benchmark; all test patches are from the same dataset and the clear references may differ in acquisition time. The 96 train-split examples are excluded from this held-out summary.
+
+An earlier 24-patch held-out spot-check reported mean per-patch PSNR of 17.64 dB for cloudy input and 28.39 dB for reconstruction (+10.75 dB mean gain); all 24 patches improved. Its mean output MAE was 0.02985 and RMSE 0.04267. The three heavy-cloud cases and urban/built-up case in that spot-check scored as follows:
 
 | Held-out example | Annotated cloud | Cloudy PSNR | Output PSNR | Gain |
 |---|---:|---:|---:|---:|
@@ -46,9 +57,9 @@ The current 24-patch held-out run reports mean per-patch PSNR of 17.64 dB for th
 | Summer scene 73, p462 | 89.70% | 11.97 dB | 26.32 dB | +14.35 dB |
 | Winter scene 108, p437 (urban/built-up label) | 63.01% | 32.90 dB | 33.81 dB | +0.91 dB |
 
-These results use paired clear references that may be from a different acquisition date. The 24 test patches are from one dataset and are not independent external validation. Re-run `python scripts/evaluate_sen12mscr_demo.py` to reproduce the scores; per-case cloudy-input and output scores are written to ignored `data/eval/sentinel_demo/metrics.csv`.
+These results use paired clear references that may be from a different acquisition date. The earlier spot-check and expanded run are from one dataset and are not independent external validation. Re-run `python scripts/evaluate_sen12mscr_demo.py` to reproduce the expanded scores; per-case cloudy-input and output scores are written to ignored `data/eval/sentinel_demo/metrics.csv`.
 
-Representative patch scores from that run across all 13 bands:
+Representative patch scores from the earlier spot-check across all 13 bands:
 
 | Split | Season / scene | MAE ↓ | RMSE ↓ | PSNR ↑ |
 |---|---|---:|---:|---:|
@@ -58,7 +69,7 @@ Representative patch scores from that run across all 13 bands:
 | Test | fall / scene 139 | 0.03098 | 0.03988 | 27.98 dB |
 | Test | winter / scene 63 | 0.02792 | 0.03960 | 28.05 dB |
 
-These are reference-based scores on individual 256×256 samples, not a full benchmark result. The clear reference can differ in acquisition time; the gallery's twenty held-out patches are all from one dataset and remain limited evidence for geographic or operational generalization.
+These are reference-based scores on individual 256×256 samples, not a full benchmark result. The clear reference can differ in acquisition time; the expanded gallery's 960 split-held-out patches are all from one dataset and remain limited evidence for cross-dataset or operational generalization.
 
 For a prepared full Sentinel product, choose the cloudy 13-band S2 file and matching VV/VH S1 file. The model uses the published preprocessing: optical DN clipped to 0–10000 and divided by 2000; VV clipped to -25–0 dB and VH to -32.5–0 dB, each scaled to 0–2. The output is clipped to model range 0–5 and rescaled to 16-bit reflectance DN. See `scripts/infer_sentinel_dsen2cr.py` for the explicit contract and tiled inference implementation.
 
@@ -282,7 +293,7 @@ Pair-specific commands are available in each script's `--help`. Cloudiness compa
 
 ## Data and model contract
 
-- The primary Sentinel demo requires 13 co-registered Sentinel-2 bands and two co-registered Sentinel-1 bands; see [Start here](#start-here-sentinel-dsen2-cr-demo).
+- The primary Sentinel demo requires 13 co-registered Sentinel-2 bands and two co-registered Sentinel-1 bands; see [Start here](#start-here-sentinel-reconstruction-demo).
 - The legacy LISS-IV interface accepts a stacked three-band GeoTIFF or three co-registered single-band files in `[Green, Red, NIR]` order.
 - Native LISS-IV processing uses one fixed `dn_max=1023`; per-image min/max normalization is intentionally avoided.
 - Inspect unfamiliar products with `scripts/inspect_liss4.py` before inference or training.
@@ -292,7 +303,7 @@ Pair-specific commands are available in each script's `--help`. Cloudiness compa
 
 ## Repository map
 
-- `app.py`: primary Sentinel-1/2 DSen2-CR Streamlit demo
+- `app.py`: ClearSky-AI Sentinel-1/2 Streamlit demo
 - `app_liss4.py`: preserved LISS-IV prototype interface
 - `PROBLEM_STATEMENT.md`: current problem definition and evaluation scope
 - `src/dsen2cr.py`: PyTorch implementation of the published Sentinel DSen2-CR architecture
@@ -310,7 +321,7 @@ Pair-specific commands are available in each script's `--help`. Cloudiness compa
 - `scripts/evaluate_liss4_real_multimetric.py`: quantitative temporal-reference metrics
 - `scripts/validate_liss4_*.py`: setup, data, training, and inference checks
 
-The published DSen2-CR checkpoint is local and intentionally ignored by Git. The original authors' repository links the checkpoint and defines the architecture/preprocessing lineage; SEN12MS-CR publishes the paired S1/cloudy-S2/clear-S2 data used for this task. Cite the [DSen2-CR project](https://github.com/ameraner/dsen2-cr) and [SEN12MS-CR record](https://mediatum.ub.tum.de/1554803) when presenting the project.
+The published checkpoint is local and intentionally ignored by Git. The original authors' repository documents its model and preprocessing lineage; SEN12MS-CR publishes the paired S1/cloudy-S2/clear-S2 data used for this task. Cite the [original model project](https://github.com/ameraner/dsen2-cr) and [SEN12MS-CR record](https://mediatum.ub.tum.de/1554803) when presenting the project.
 
 ## Known limitations
 
