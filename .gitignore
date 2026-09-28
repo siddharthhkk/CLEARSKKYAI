@@ -19,6 +19,7 @@ data/synthetic_pretrain_v3r_bhoonidhi_*/
 weights/*.pth
 weights/*.hdf5
 !weights/dsen2cr_sar_carl.pth
+!weights/liss4_dsen2cr_synthetic_v3r.pth
 !weights/README.md
 
 # Temporary preview embeds

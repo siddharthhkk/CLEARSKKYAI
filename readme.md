@@ -154,7 +154,7 @@ Launch the local interface from the repository root:
 streamlit run app_liss4.py
 ```
 
-Choose a locally available LISS-IV checkpoint, then provide either a stacked three-band GeoTIFF or three separate co-registered TIFFs in `[Green, Red, NIR]` (`BAND2`, `BAND3`, `BAND4`) order. You can upload TIFFs or enter local file paths; local paths are recommended for large scenes. The app shows a downsampled false-color input/output preview and lets you download the georeferenced reconstruction. Checkpoints and satellite imagery remain local and are not included in the repository. This preserved LISS-IV UI is a demo wrapper around the tiled inference script documented below; results are experimental estimates, not guaranteed cloud-free ground truth.
+The app uses this project's V3R checkpoint at `weights/liss4_dsen2cr_synthetic_v3r.pth` (download it with `git lfs pull`). Then provide either a stacked three-band GeoTIFF or three separate co-registered TIFFs in `[Green, Red, NIR]` (`BAND2`, `BAND3`, `BAND4`) order. You can upload TIFFs or enter local file paths; local paths are recommended for large scenes. The app shows a downsampled false-color input/output preview and lets you download the georeferenced reconstruction. Satellite imagery and training data remain local and are not included in the repository. This preserved LISS-IV UI is a demo wrapper around the tiled inference script documented below; results are experimental estimates, not guaranteed cloud-free ground truth.
 
 Run the self-contained checks. These create temporary fixtures and do not need Bhoonidhi, a downloaded dataset, or the trained checkpoint:
 
@@ -190,7 +190,7 @@ python scripts/infer_liss4_real_cloudy_only_overlap.py \
 
 The three input grids must match. Larger overlap can reduce tile seams, at a substantial runtime cost; inspect a preview on unfamiliar, cloud-heavy scenes. Without a clear reference, this remains a qualitative reconstruction, not an accuracy evaluation.
 
-The LISS-IV checkpoint and imagery are intentionally excluded from Git. On a fresh clone, put a compatible LISS-IV checkpoint at the path above or train one locally as described below; do not expect GitHub to contain the ignored local weights or data.
+The project-trained LISS-IV V3R checkpoint is included through Git LFS; run `git lfs pull` after cloning. The original satellite imagery and generated training data remain excluded from Git. You can also train a replacement checkpoint locally as described below.
 
 ## Prepare training data from a local clear GeoTIFF
 
@@ -329,7 +329,7 @@ Pair-specific commands are available in each script's `--help`. Cloudiness compa
 - Inspect unfamiliar products with `scripts/inspect_liss4.py` before inference or training.
 - Train/clear pairs must be co-registered on an identical grid. The paired dataset loader rejects grid mismatches.
 - Real temporal pairs are references, not pixel-perfect ground truth.
-- Local `data/` and model checkpoint files under `weights/` are excluded from Git; only code, configs, and documentation are versioned.
+- Local `data/` is excluded from Git; only the demo Sentinel samples and the documented model checkpoints are versioned through Git LFS. Other local experiment checkpoints remain ignored.
 
 ## Repository map
 
@@ -351,7 +351,7 @@ Pair-specific commands are available in each script's `--help`. Cloudiness compa
 - `scripts/evaluate_liss4_real_multimetric.py`: quantitative temporal-reference metrics
 - `scripts/validate_liss4_*.py`: setup, data, training, and inference checks
 
-The published checkpoint is local and intentionally ignored by Git. The original authors' repository documents its model and preprocessing lineage; SEN12MS-CR publishes the paired S1/cloudy-S2/clear-S2 data used for this task. Cite the [original model project](https://github.com/ameraner/dsen2-cr) and [SEN12MS-CR record](https://mediatum.ub.tum.de/1554803) when presenting the project.
+The published Sentinel-2 checkpoint is included in Git LFS, alongside the separately documented project-trained LISS-IV checkpoint. The original authors' repository documents the Sentinel model and preprocessing lineage; SEN12MS-CR publishes the paired S1/cloudy-S2/clear-S2 data used for that task. Cite the [original model project](https://github.com/ameraner/dsen2-cr) and [SEN12MS-CR record](https://mediatum.ub.tum.de/1554803) when presenting the Sentinel-2 project.
 
 ## Known limitations
 

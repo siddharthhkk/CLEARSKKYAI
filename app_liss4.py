@@ -179,9 +179,9 @@ st.info(
 available_checkpoints = checkpoint_paths()
 if not available_checkpoints:
     st.error(
-        "No trained checkpoint was found. This repository does not include model "
-        "weights; place an authorized LISS-IV checkpoint matching the project "
-        "format in the `weights` folder, or train one using the README instructions."
+        "No LISS-IV checkpoint was found. Run `git lfs pull` to fetch the included "
+        "project-trained V3R weights, or place another compatible checkpoint in "
+        "the `weights` folder and follow the README instructions."
     )
     st.stop()
 

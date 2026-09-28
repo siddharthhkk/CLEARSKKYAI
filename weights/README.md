@@ -26,10 +26,12 @@ Training output is kept separate from the published pretrained baseline. The app
 
 ## Historical LISS-IV prototype
 
-The V3R checkpoint is local and intentionally not redistributed. The best checkpoint currently on the project workstation records epoch 16 and 34.501 dB synthetic validation PSNR. To train/save a checkpoint at the inference command's default path, with the V3R split manifests available, run:
+`liss4_dsen2cr_synthetic_v3r.pth` is this project's own PyTorch-trained LISS-IV checkpoint and is included through Git LFS. It is distinct from the published Sentinel-2 checkpoint above, and is used by `app_liss4.py` (not the Sentinel-2 `app.py`). It records epoch 16 and 34.501 dB synthetic validation PSNR on a spatial holdout derived from one clear source scene. These are synthetic-validation results, not broad real-scene accuracy claims. Its SHA-256 and model/data notes are in [`liss4_dsen2cr_synthetic_v3r.provenance.json`](liss4_dsen2cr_synthetic_v3r.provenance.json).
+
+The two-scene fine-tuned candidate remains an experiment and is not the default app checkpoint. To reproduce training of V3R, with its split manifests and generated data available locally, run:
 
 ```sh
 python scripts/train_liss4_synthetic.py --output weights/liss4_dsen2cr_synthetic_v3r.pth
 ```
 
-The legacy LISS-IV inference script's default checkpoint path is `weights/liss4_dsen2cr_synthetic_v3r.pth`. Checkpoints are ignored by Git; on a fresh clone, create one by training or copy an authorized local checkpoint into this directory.
+The LISS-IV inference script and app default to `weights/liss4_dsen2cr_synthetic_v3r.pth`. On a fresh clone, run `git lfs pull` to fetch it. Satellite imagery and training data remain local and are not included.
