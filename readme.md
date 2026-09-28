@@ -1,19 +1,87 @@
-# ClearSky-AI: LISS-IV cloud removal
+# ClearSky-AI: Sentinel-2 cloud reconstruction with DSen2-CR
 
-ClearSky-AI is a personal research prototype for reconstructing cloud-affected native LISS-IV imagery. It is motivated by the ISRO hackathon problem, but is being developed as a practical personal tool rather than a strict competition submission.
+ClearSky-AI is a personal remote-sensing research project. Its primary demo now uses the published SAR-fusion DSen2-CR checkpoint: cloudy Sentinel-2 optical data plus co-registered Sentinel-1 VV/VH radar in, a 13-band Sentinel-2 estimate out. This replaces the earlier LISS-IV-centered problem statement for the main demo; the LISS-IV experiments and app remain preserved as a separate research track.
 
-The repository keeps the established optical-only DSen2-CR-style V3R model as its baseline. Bhoonidhi is optional: the inference, data-preparation, training, and smoke-test workflows do not require Bhoonidhi products.
+This is an integration and evaluation of an existing pretrained model, not a claim that this project trained the released DSen2-CR checkpoint. Results are estimates and can hallucinate or miss surface detail hidden by clouds. See [PROBLEM_STATEMENT.md](PROBLEM_STATEMENT.md) for the revised objective, input contract, evaluation plan, and limitations.
 
-## Current model and evidence
+## Start here: Sentinel DSen2-CR demo
 
-The active model is a DSen2-CR-style residual CNN with:
+Install the project dependencies and launch the app:
+
+```sh
+pip install -r requirements.txt
+streamlit run app.py
+```
+
+The app accepts a 13-band cloudy Sentinel-2 GeoTIFF in `B01, B02, B03, B04, B05, B06, B07, B08, B8A, B09, B10, B11, B12` order plus a co-registered two-band Sentinel-1 GeoTIFF in `VV, VH` order, with SAR values in dB. Both files must use the same pixel grid, CRS, and affine transform. The output retains the optical grid and has 13 bands. The UI can use file uploads, local paths, or the prepared SEN12MS-CR gallery.
+
+The published checkpoint is intentionally not stored in Git. Follow [weights/README.md](weights/README.md) to obtain and convert the original authors' SAR + CARL checkpoint. Once it is available at `weights/dsen2cr_sar_carl.pth`, run the small integration check:
+
+```sh
+python scripts/validate_sentinel_dsen2cr.py
+```
+
+### Prepare demo examples
+
+The complete official [SEN12MS-CR download](https://mediatum.ub.tum.de/1554803) is 272 GB. Instead, the optional gallery script reads selected row groups from the public, reorganized [Hugging Face mirror](https://huggingface.co/datasets/Hermanni/sen12mscr). The default gallery contains 20 standard test patches (two per held-out scene), three additional held-out cloud challenges annotated at 86.79–97.25% cloud coverage, one held-out urban/built-up patch (IGBP class 13; 63.01% cloud coverage), and one train-split example: 25 cases total. The cloud values come from a public [SEN12MS-CR-derived annotation dataset](https://zenodo.org/records/17114706); the land-cover class comes from the original [SEN12MS labels](https://github.com/schmitt-muc/SEN12MS). The urban label is a land-cover category, not a verified city name. The mirror strips georeferencing, so these examples cannot currently be placed at a named city on a map. The script reads only the row groups needed for selected examples and does not unpack the complete archive:
+
+```sh
+pip install fsspec pyarrow
+python scripts/prepare_sen12mscr_demo.py
+python scripts/evaluate_sen12mscr_demo.py
+```
+
+The app shows SAR, cloudy optical input, model output, and clear reference, with reference comparison metrics. Curated challenge cards show their published cloud percentages and, for the urban case, the IGBP class label. The clear sample is co-registered, but it may not be a same-time observation or perfect ground truth. `python scripts/prepare_sen12mscr_demo.py --all-test` adds two more patches per test scene (45 cases total, including curated cases). Source imagery is local under ignored `data/sentinel_demo/` and is not committed. Each downloaded sample contains 256×256 pixel arrays but no geospatial transform in the mirror, so these are patch demonstrations, not map-ready products.
+
+Each case folder contains `cloudy_s2.tif` (13 optical bands), `sar_s1_vv_vh.tif` (two SAR bands), and `clear_s2_reference.tif` (paired target); `data/sentinel_demo/manifest.csv` records the split, season, scene, and relative paths.
+
+Labels are intentionally precise: the train case comes from the dataset's train split and demonstrates the checkpoint's training-data family, but does not prove that the exact patch was used to fit the released weights. Test cases are from all ten scenes in the dataset's published test split, absent from its listed training scenes; they are held-out examples from the same dataset, not an independent external dataset. Don't report a training-split score as held-out accuracy.
+
+The current 24-patch held-out run reports mean per-patch PSNR of 17.64 dB for the cloudy input and 28.39 dB for the model output (+10.75 dB mean gain); PSNR improved on 24/24 patches. Mean output MAE is 0.02985 and RMSE 0.04267 (reflectance normalized to 0–1). Individual output PSNR ranges from 20.70 to 36.40 dB, so results still vary meaningfully by patch. These are unweighted means of patch-level metrics, not a pooled full-dataset benchmark. The three heavy-cloud cases and urban/built-up case score as follows:
+
+| Held-out example | Annotated cloud | Cloudy PSNR | Output PSNR | Gain |
+|---|---:|---:|---:|---:|
+| Spring scene 31, p518 | 97.25% | 12.78 dB | 29.69 dB | +16.91 dB |
+| Spring scene 44, p573 | 86.79% | 10.33 dB | 34.56 dB | +24.22 dB |
+| Summer scene 73, p462 | 89.70% | 11.97 dB | 26.32 dB | +14.35 dB |
+| Winter scene 108, p437 (urban/built-up label) | 63.01% | 32.90 dB | 33.81 dB | +0.91 dB |
+
+These results use paired clear references that may be from a different acquisition date. The 24 test patches are from one dataset and are not independent external validation. Re-run `python scripts/evaluate_sen12mscr_demo.py` to reproduce the scores; per-case cloudy-input and output scores are written to ignored `data/eval/sentinel_demo/metrics.csv`.
+
+Representative patch scores from that run across all 13 bands:
+
+| Split | Season / scene | MAE ↓ | RMSE ↓ | PSNR ↑ |
+|---|---|---:|---:|---:|
+| Train | spring / scene 101 | 0.02640 | 0.04419 | 27.09 dB |
+| Test | spring / scene 106 | 0.01979 | 0.02799 | 31.06 dB |
+| Test | summer / scene 73 | 0.02103 | 0.02719 | 31.31 dB |
+| Test | fall / scene 139 | 0.03098 | 0.03988 | 27.98 dB |
+| Test | winter / scene 63 | 0.02792 | 0.03960 | 28.05 dB |
+
+These are reference-based scores on individual 256×256 samples, not a full benchmark result. The clear reference can differ in acquisition time; the gallery's twenty held-out patches are all from one dataset and remain limited evidence for geographic or operational generalization.
+
+For a prepared full Sentinel product, choose the cloudy 13-band S2 file and matching VV/VH S1 file. The model uses the published preprocessing: optical DN clipped to 0–10000 and divided by 2000; VV clipped to -25–0 dB and VH to -32.5–0 dB, each scaled to 0–2. The output is clipped to model range 0–5 and rescaled to 16-bit reflectance DN. See `scripts/infer_sentinel_dsen2cr.py` for the explicit contract and tiled inference implementation.
+
+### Preserved LISS-IV research prototype
+
+The earlier native LISS-IV line is retained, including its data-preparation, training, evaluation scripts, and Streamlit UI. It uses a custom three-band DSen2-CR-style model and local experimental weights; it is not the published Sentinel model and does not use SAR. Run it separately with:
+
+```sh
+streamlit run app_liss4.py
+```
+
+The following sections record that established LISS-IV experimental history; they are not the current primary demo objective.
+
+## Historical LISS-IV model and evidence
+
+The historical LISS-IV model was a DSen2-CR-style residual CNN with:
 
 - Input bands: `[Green, Red, NIR]` (LISS-IV `BAND2`, `BAND3`, `BAND4`)
 - Expected native DN range: `0–1023`
 - 256 features, 16 residual blocks, residual scale 0.1
 - Optical-only inference; optional SAR support is not part of the active checkpoint
 
-The best local V3R checkpoint records epoch 16 and 34.501 dB synthetic validation PSNR. The generated V3R data has 512 patches from one clear source scene: 452 training patches, 51 spatially held-out validation patches, and 9 boundary patches discarded from the split.
+The best local LISS-IV V3R checkpoint records epoch 16 and 34.501 dB synthetic validation PSNR. The generated V3R data has 512 patches from one clear source scene: 452 training patches, 51 spatially held-out validation patches, and 9 boundary patches discarded from the split.
 
 An expanded two-scene candidate was fine-tuned from that checkpoint through epoch 20. On the combined 315-patch spatial validation set, the original checkpoint scores 27.801 dB and the candidate 32.863 dB. The gain comes mainly from the added Bhoonidhi scene: per-source PSNR changes from 34.501 to 32.302 dB on the original validation patches, and from 27.187 to 32.980 dB on Bhoonidhi patches. The candidate therefore adapts to the added source but trades off some original-source performance; it remains an experiment, not the default model.
 
@@ -29,13 +97,23 @@ On this pair the single-scene baseline is better on MAE, RMSE, PSNR, and SSIM; t
 
 A separate Bhoonidhi stress test (01-Jun-2020 cloudy vs 01-Nov-2023 clear) scored 8.585 dB before and 7.816 dB after V3R. The acquisitions are more than three years apart, so this is not a clean benchmark; it does show that V3R can be too conservative under a difficult cloud regime. Bhoonidhi is useful for later testing, but is not needed to run the project.
 
-## Quick start
+## LISS-IV reproduction and checks (legacy)
 
 Install the Python dependencies from the project root:
 
 ```sh
 pip install -r requirements.txt
 ```
+
+### Streamlit demo
+
+Launch the local interface from the repository root:
+
+```sh
+streamlit run app_liss4.py
+```
+
+Choose a locally available LISS-IV checkpoint, then provide either a stacked three-band GeoTIFF or three separate co-registered TIFFs in `[Green, Red, NIR]` (`BAND2`, `BAND3`, `BAND4`) order. You can upload TIFFs or enter local file paths; local paths are recommended for large scenes. The app shows a downsampled false-color input/output preview and lets you download the georeferenced reconstruction. Checkpoints and satellite imagery remain local and are not included in the repository. This preserved LISS-IV UI is a demo wrapper around the tiled inference script documented below; results are experimental estimates, not guaranteed cloud-free ground truth.
 
 Run the self-contained checks. These create temporary fixtures and do not need Bhoonidhi, a downloaded dataset, or the trained checkpoint:
 
@@ -71,7 +149,7 @@ python scripts/infer_liss4_real_cloudy_only_overlap.py \
 
 The three input grids must match. Larger overlap can reduce tile seams, at a substantial runtime cost; inspect a preview on unfamiliar, cloud-heavy scenes. Without a clear reference, this remains a qualitative reconstruction, not an accuracy evaluation.
 
-The checkpoint and imagery are intentionally excluded from Git. On a fresh clone, put a checkpoint at the path above or train one locally as described below; do not expect GitHub to contain the ignored local weights or data.
+The LISS-IV checkpoint and imagery are intentionally excluded from Git. On a fresh clone, put a compatible LISS-IV checkpoint at the path above or train one locally as described below; do not expect GitHub to contain the ignored local weights or data.
 
 ## Prepare training data from a local clear GeoTIFF
 
@@ -204,7 +282,8 @@ Pair-specific commands are available in each script's `--help`. Cloudiness compa
 
 ## Data and model contract
 
-- Supply either a stacked three-band GeoTIFF or three co-registered single-band files in `[Green, Red, NIR]` order.
+- The primary Sentinel demo requires 13 co-registered Sentinel-2 bands and two co-registered Sentinel-1 bands; see [Start here](#start-here-sentinel-dsen2-cr-demo).
+- The legacy LISS-IV interface accepts a stacked three-band GeoTIFF or three co-registered single-band files in `[Green, Red, NIR]` order.
 - Native LISS-IV processing uses one fixed `dn_max=1023`; per-image min/max normalization is intentionally avoided.
 - Inspect unfamiliar products with `scripts/inspect_liss4.py` before inference or training.
 - Train/clear pairs must be co-registered on an identical grid. The paired dataset loader rejects grid mismatches.
@@ -213,7 +292,15 @@ Pair-specific commands are available in each script's `--help`. Cloudiness compa
 
 ## Repository map
 
-- `src/liss4.py`, `src/liss4_dsen2cr.py`: DN normalization and active model
+- `app.py`: primary Sentinel-1/2 DSen2-CR Streamlit demo
+- `app_liss4.py`: preserved LISS-IV prototype interface
+- `PROBLEM_STATEMENT.md`: current problem definition and evaluation scope
+- `src/dsen2cr.py`: PyTorch implementation of the published Sentinel DSen2-CR architecture
+- `scripts/infer_sentinel_dsen2cr.py`: aligned Sentinel GeoTIFF inference
+- `scripts/prepare_sen12mscr_demo.py`: selected public SEN12MS-CR gallery preparation
+- `scripts/evaluate_sen12mscr_demo.py`: per-case metrics on prepared reference pairs
+- `scripts/validate_sentinel_dsen2cr.py`: checkpoint and integration smoke check
+- `src/liss4.py`, `src/liss4_dsen2cr.py`: legacy LISS-IV DN normalization and custom model
 - `src/liss4_dataset.py`, `src/liss4_patch_dataset.py`: paired and patch data loaders
 - `scripts/extract_liss4_clear_patches.py`: clear GeoTIFF to NPZ source patches
 - `scripts/make_liss4_synthetic_pretrain_v3r_from_npz.py`: V3R synthetic corruption
@@ -223,13 +310,22 @@ Pair-specific commands are available in each script's `--help`. Cloudiness compa
 - `scripts/evaluate_liss4_real_multimetric.py`: quantitative temporal-reference metrics
 - `scripts/validate_liss4_*.py`: setup, data, training, and inference checks
 
-The repository also retains `src/dsen2cr.py` and its converter as an optional reference to the published DSen2-CR implementation. The upstream checkpoint is not included.
+The published DSen2-CR checkpoint is local and intentionally ignored by Git. The original authors' repository links the checkpoint and defines the architecture/preprocessing lineage; SEN12MS-CR publishes the paired S1/cloudy-S2/clear-S2 data used for this task. Cite the [DSen2-CR project](https://github.com/ameraner/dsen2-cr) and [SEN12MS-CR record](https://mediatum.ub.tum.de/1554803) when presenting the project.
 
 ## Known limitations
 
-- Synthetic training now uses patches from two source scenes, but validation is spatially held out within those same scenes; scene-level generalization remains untested.
+- The published model reconstructs rather than observes hidden surface detail; the estimate can be inaccurate, especially under thick cloud, haze, snow, or domain shift.
+- The prepared gallery comes from one dataset. Its test scenes are held-out examples, not independent external validation; the train-split example is not a held-out score.
+- User-supplied scenes must already match the model's optical order and reflectance scaling, SAR VV/VH order and dB scaling, and exact pixel grid.
+- The complete SEN12MS-CR archive is 272 GB; the optional local gallery is only a small subset and its mirror omits georeferencing.
+- No claim is made that these published weights are locally retrained, optimal for Indian imagery, or suitable for LISS-IV.
+- Large Sentinel rasters use overlapping tiles but currently allocate output-sized blending buffers; begin with gallery patches or modest test rasters.
+
+### Historical LISS-IV limitations
+
+- Synthetic training uses patches from two source scenes, but validation is spatially held out within those same scenes; scene-level generalization remains untested.
 - The multi-scene candidate improves combined synthetic validation but underperforms the original baseline on the held-out Guwahati temporal pair.
 - The cloud screen is heuristic only; reliable native cloud masks and simultaneous cloudy/clear LISS-IV pairs remain scarce.
 - Native paired cloudy/clear acquisitions and reliable cloud masks are scarce.
-- The active checkpoint does not use SAR.
-- Large scenes are processed without full-scene float buffers, but runtime and row-buffer memory still depend on scene width, overlap, and tile size.
+- The historical LISS-IV checkpoint does not use SAR.
+- LISS-IV large-scene runtime and row-buffer memory depend on scene width, overlap, and tile size.

@@ -4,6 +4,7 @@ __pycache__/
 *.pyo
 
 # Local / raw satellite data
+data/sentinel_demo/
 data/raw/**
 data/eval/**
 data/synthetic_pretrain/**
