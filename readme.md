@@ -2,6 +2,8 @@
 
 ClearSky-AI is a personal remote-sensing research project. Its primary demo takes cloudy Sentinel-2 optical data plus co-registered Sentinel-1 VV/VH radar and produces a 13-band Sentinel-2 estimate. The demo integrates the published SAR + CARL checkpoint by Meraner et al. (2020); it is not a ClearSky-AI-trained model. The earlier LISS-IV experiments and app remain preserved as a separate research track.
 
+New to the project? Start with the [beginner guide](docs/BEGINNER_GUIDE.md) for setup, data, training, evaluation, and the planned custom PyTorch architecture.
+
 This project owns the application, data preparation, and evaluation workflow—not the pretrained weights or their original architecture. Results are estimates and can hallucinate or miss surface detail hidden by clouds. See [PROBLEM_STATEMENT.md](PROBLEM_STATEMENT.md) for the objective, input contract, evaluation plan, and limitations.
 
 The software is distributed under GNU GPL-3.0; see [LICENSE](LICENSE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). The sample dataset has its own attribution and terms described below.
