@@ -1,12 +1,3 @@
-"""PyTorch training utilities for the published DSen2-CR architecture.
-
-This is a PyTorch training/data-pipeline port for SEN12MS-CR-style paired
-Sentinel-1/Sentinel-2 data. It does not imply that the bundled published
-checkpoint was trained by this project.
-"""
-
-# Adapted training/data workflow for this project, 2026-09-29; GPL-3.0.
-
 from __future__ import annotations
 
 import csv
@@ -36,7 +27,6 @@ class TrainingSample:
 
 
 def read_training_samples(manifest: Path, data_root: Path) -> list[TrainingSample]:
-    """Read either this project's manifest.csv or upstream's TSV file list."""
     manifest = manifest.resolve()
     data_root = data_root.resolve()
     with manifest.open("r", newline="", encoding="utf-8-sig") as stream:
@@ -61,8 +51,6 @@ def read_training_samples(manifest: Path, data_root: Path) -> list[TrainingSampl
                 )
         return result
 
-    # Original datasetfilelist.csv rows are tab-delimited records whose first
-    # field is: split, SAR folder, clear folder, cloudy folder, image filename.
     result = []
     with manifest.open("r", newline="", encoding="utf-8-sig") as stream:
         for line_number, columns in enumerate(csv.reader(stream, delimiter="\t"), start=1):

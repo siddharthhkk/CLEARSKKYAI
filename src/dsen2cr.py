@@ -1,10 +1,6 @@
 import torch
 import torch.nn as nn
 
-# Based on the upstream DSen2-CR PyTorch architecture by Patrick Ebel.
-# Modified for this project on 2026-09-29; distributed under GPL-3.0 (LICENSE).
-
-
 class DSen2CR(nn.Module):
     """
     PyTorch reimplementation of the published DSen2-CR residual architecture.
@@ -13,18 +9,9 @@ class DSen2CR(nn.Module):
       - 13 Sentinel-2 channels in B01..B12/B8A order used by SEN12MS-CR
       - 2 Sentinel-1 channels (VV, VH)
 
-    The pretrained public checkpoint is distributed by the original authors as
-    a Keras HDF5 file. Use scripts/convert_dsen2cr_weights.py to convert it to
-    the PyTorch state-dict format expected here.
-
     Architecture:
       15-channel input -> 256-channel conv -> 16 residual blocks
       -> 13-channel conv -> long skip from the cloudy optical input.
-
-    Reference:
-      Meraner et al., 2020, "Cloud removal in Sentinel-2 imagery using a deep
-      residual neural network and SAR-optical data fusion."
-      https://github.com/ameraner/dsen2-cr
     """
 
     def __init__(self, features=256, blocks=16, res_scale=0.1):

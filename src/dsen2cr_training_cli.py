@@ -1,7 +1,3 @@
-"""Command-line training loop for the PyTorch DSen2-CR implementation."""
-
-# New PyTorch training entry point for this project, 2026-09-29; GPL-3.0.
-
 from __future__ import annotations
 
 import argparse
@@ -237,7 +233,6 @@ def main() -> None:
     print(f"Best validation checkpoint: {args.output}")
     print(f"Latest/resume checkpoint: {latest_path}")
     print(f"Training history: {history_path}")
-
 
 if __name__ == "__main__":
     main()

@@ -1,5 +1,6 @@
 """Legacy LISS-IV Streamlit interface retained alongside the Sentinel demo."""
 
+import csv
 from pathlib import Path
 import subprocess
 import sys
@@ -14,15 +15,53 @@ from rasterio.enums import Resampling
 PROJECT_ROOT = Path(__file__).resolve().parent
 INFERENCE_SCRIPT = PROJECT_ROOT / "scripts" / "infer_liss4_real_cloudy_only_overlap.py"
 WEIGHTS_DIR = PROJECT_ROOT / "weights"
+DEMO_MANIFEST = PROJECT_ROOT / "data" / "liss4_demo" / "manifest.csv"
 MAX_PREVIEW_EDGE = 1200
+DEMO_LFS_PENDING = False
+
+
+def is_lfs_pointer(path):
+    """Return whether a demo asset is present only as a Git LFS pointer."""
+    if not path.is_file():
+        return False
+    try:
+        with path.open("rb") as stream:
+            return stream.read(128).startswith(
+                b"version https://git-lfs.github.com/spec/v1"
+            )
+    except OSError:
+        return False
+
+
+def read_demo_gallery():
+    """Load available, bundled LISS-IV demo samples from the manifest."""
+    global DEMO_LFS_PENDING
+    DEMO_LFS_PENDING = False
+    if not DEMO_MANIFEST.is_file():
+        return []
+
+    with DEMO_MANIFEST.open(newline="", encoding="utf-8") as stream:
+        rows = list(csv.DictReader(stream))
+
+    available = []
+    for row in rows:
+        path = (DEMO_MANIFEST.parent / row["cloudy_tif"]).resolve()
+        if is_lfs_pointer(path):
+            DEMO_LFS_PENDING = True
+            continue
+        if not path.is_file():
+            continue
+        row["cloudy_path"] = path
+        available.append(row)
+    return available
 
 
 def checkpoint_paths():
-    """Return available trained project checkpoints, excluding smoke-test weights."""
+    """Return available LISS-IV checkpoints, excluding resumable latest states."""
     return sorted(
         (
             path
-            for path in WEIGHTS_DIR.glob("liss4_dsen2cr_synthetic*.pth")
+            for path in WEIGHTS_DIR.glob("liss4_*.pth")
             if "latest" not in path.stem
         ),
         key=lambda path: (path.name != "liss4_dsen2cr_synthetic_v3r.pth", path.name),
@@ -132,7 +171,16 @@ def false_color_previews(input_preview, output_preview):
     return to_rgb(input_preview), to_rgb(output_preview)
 
 
-def run_inference(input_paths, separate_bands, checkpoint, output_path, tile, overlap, device):
+def run_inference(
+    input_paths,
+    separate_bands,
+    checkpoint,
+    output_path,
+    tile,
+    overlap,
+    device,
+    diffcr_root=None,
+):
     command = [
         sys.executable,
         str(INFERENCE_SCRIPT),
@@ -147,6 +195,8 @@ def run_inference(input_paths, separate_bands, checkpoint, output_path, tile, ov
         "--device",
         device,
     ]
+    if diffcr_root:
+        command.extend(("--diffcr-root", diffcr_root))
     if separate_bands:
         command.extend(("--cloudy-bands", *(str(path) for path in input_paths)))
     else:
@@ -192,29 +242,57 @@ default_index = (
     if preferred_checkpoint in checkpoint_labels
     else 0
 )
-checkpoint_name = st.selectbox(
+checkpoint_name = st.sidebar.selectbox(
     "Model checkpoint",
     options=list(checkpoint_labels),
     index=default_index,
     help="The single-scene V3R checkpoint is the recommended demo baseline.",
 )
 checkpoint = checkpoint_labels[checkpoint_name]
+diffcr_root = st.sidebar.text_input(
+    "DiffCR source folder (optional)",
+    value="",
+    help=(
+        "Only needed for a transferred DiffCR checkpoint when its saved source "
+        "path is unavailable on this computer."
+    ),
+)
 
-input_source = st.radio(
-    "How will you provide the imagery?",
-    ("Upload TIFF(s)", "Use local file path(s)"),
-    horizontal=True,
+demo_mode = "Prepared LISS-IV demo"
+input_source = st.sidebar.selectbox(
+    "Image source",
+    (demo_mode, "Upload TIFF(s)", "Use local file path(s)"),
 )
-input_format = st.radio(
-    "Input format",
-    ("One stacked 3-band GeoTIFF", "Three separate single-band TIFFs"),
-    horizontal=True,
-)
-separate_bands = input_format.startswith("Three separate")
 input_paths = []
 input_names = []
+separate_bands = False
 
-if input_source == "Upload TIFF(s)":
+if input_source == demo_mode:
+    demo_samples = read_demo_gallery()
+    if DEMO_LFS_PENDING:
+        st.sidebar.warning("The demo image needs Git LFS. Run `git lfs pull`.")
+    if demo_samples:
+        st.sidebar.caption(f"{len(demo_samples)} prepared demo samples")
+        sample_by_label = {sample["label"]: sample for sample in demo_samples}
+        selected_label = st.sidebar.selectbox(
+            "Demo sample", options=list(sample_by_label), key="liss4_demo_sample"
+        )
+        selected_demo = sample_by_label[selected_label]
+        input_paths = [selected_demo["cloudy_path"]]
+        input_names = [selected_demo["cloudy_path"].name]
+        st.sidebar.caption(selected_demo["description"])
+    else:
+        st.sidebar.info(
+            "No bundled demo is available. Fetch it with `git lfs pull`, or choose "
+            "Upload TIFF(s) / Use local file path(s)."
+        )
+elif input_source == "Upload TIFF(s)":
+    input_format = st.radio(
+        "Input format",
+        ("One stacked 3-band GeoTIFF", "Three separate single-band TIFFs"),
+        horizontal=True,
+    )
+    separate_bands = input_format.startswith("Three separate")
     st.caption("Large scenes are easier to run by local path; browser uploads have a size limit.")
     if separate_bands:
         upload_columns = st.columns(3)
@@ -240,6 +318,12 @@ if input_source == "Upload TIFF(s)":
             input_paths = [uploaded]
             input_names = [uploaded.name]
 else:
+    input_format = st.radio(
+        "Input format",
+        ("One stacked 3-band GeoTIFF", "Three separate single-band TIFFs"),
+        horizontal=True,
+    )
+    separate_bands = input_format.startswith("Three separate")
     if separate_bands:
         path_columns = st.columns(3)
         band_specs = (
@@ -303,6 +387,7 @@ if run_clicked:
                     tile,
                     overlap,
                     device,
+                    diffcr_root.strip() or None,
                 )
                 if separate_bands:
                     input_preview = read_separate_band_previews(staged_paths)

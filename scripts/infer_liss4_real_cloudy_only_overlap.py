@@ -18,6 +18,7 @@ if SRC_DIR not in sys.path:
 
 from liss4 import normalize_liss4
 from liss4_dsen2cr import LISS4DSen2CR
+from liss4_diffcr_transfer import LISS4DiffCRTransfer, resolve_diffcr_root
 
 READ_ONLY_TAG_NAMESPACES = {"IMAGE_STRUCTURE", "DERIVED_SUBDATASETS"}
 
@@ -131,19 +132,26 @@ def select_device(name):
     return torch.device(name)
 
 
-def load_model(checkpoint_path, device):
+def load_model(checkpoint_path, device, diffcr_root=None):
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
     if not isinstance(checkpoint, dict) or "model_state_dict" not in checkpoint:
         raise ValueError(
             f"Checkpoint must contain a 'model_state_dict': {checkpoint_path}"
         )
 
-    model = LISS4DSen2CR(
-        features=int(checkpoint.get("features", 256)),
-        blocks=int(checkpoint.get("blocks", 16)),
-        res_scale=0.1,
-        use_sar=False,
-    ).to(device)
+    model_type = checkpoint.get("model_type", "liss4_paired_supervised")
+    if model_type == "liss4_diffcr_transfer":
+        root = resolve_diffcr_root(diffcr_root or checkpoint.get("diffcr_root"))
+        model = LISS4DiffCRTransfer(diffcr_root=root).to(device)
+    elif model_type in ("liss4_paired_supervised", "liss4_synthetic"):
+        model = LISS4DSen2CR(
+            features=int(checkpoint.get("features") or 256),
+            blocks=int(checkpoint.get("blocks") or 16),
+            res_scale=0.1,
+            use_sar=False,
+        ).to(device)
+    else:
+        raise ValueError(f"Unsupported LISS-IV checkpoint model_type={model_type!r}")
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
     return model, checkpoint
@@ -249,6 +257,11 @@ def main():
         "--checkpoint",
         default="weights/liss4_dsen2cr_synthetic_v3r.pth",
     )
+    ap.add_argument(
+        "--diffcr-root",
+        default=None,
+        help="DiffCR source repository root; otherwise read from checkpoint metadata.",
+    )
     input_group = ap.add_mutually_exclusive_group(required=True)
     input_group.add_argument("--cloudy", help="Stacked three-band [G,R,NIR] GeoTIFF.")
     input_group.add_argument(
@@ -297,7 +310,7 @@ def main():
         raise ValueError("--output must name a file, not a directory.")
 
     device = select_device(args.device)
-    model, checkpoint = load_model(args.checkpoint, device)
+    model, checkpoint = load_model(args.checkpoint, device, args.diffcr_root)
     output_dir = os.path.dirname(output_path)
     os.makedirs(output_dir, exist_ok=True)
     temp_fd, temp_path = tempfile.mkstemp(

@@ -18,13 +18,7 @@ class ResBlock(nn.Module):
 
 class LISS4DSen2CR(nn.Module):
     """
-    DSen2-CR-style residual reconstruction model adapted to LISS-IV.
-
-    Optical input:
-      [G, R, NIR]
-
-    Optional SAR:
-      [VV, VH]
+    PyTorch reimplementation of the DSen2-CR architecture modified for LISS-IV
     """
     def __init__(self, features=256, blocks=16, res_scale=0.1, use_sar=False):
         super().__init__()

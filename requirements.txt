@@ -1,12 +1,9 @@
-# Core
+
 torch>=2.0.0
 numpy>=1.24.0
 rasterio>=1.3.0
 streamlit>=1.57.0
 
-# Preview / diagnostics
 matplotlib>=3.7.0
 scipy>=1.10.0
 
-# Optional published DSen2-CR checkpoint conversion
-h5py>=3.8.0

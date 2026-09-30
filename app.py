@@ -463,7 +463,7 @@ def display_results(result: dict | None, current_input: str) -> None:
         ".block-container{padding-top:1.5rem;padding-bottom:2rem;}"
         "[data-testid='stSidebar']{background:#20212b;}"
         "[data-testid='stMetric']{background:#171922;padding:14px;border-radius:10px;}"
-        "[data-testid='stImage'] img{border-radius:8px;max-height:320px!important;"
+        "[data-testid='stImage'] img{border-radius:8px;max-width:100%!important;"
         "height:auto!important;object-fit:contain;}"
         "</style>",
         unsafe_allow_html=True,

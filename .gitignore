@@ -36,3 +36,7 @@ data/synthetic_pretrain_prod/
 data/raw/bhoonidhi_liss4/
 data/raw/chennai/
 data/eval/
+
+# Curated LISS-IV demo assets are small, versioned examples (tracked with Git LFS).
+!data/liss4_demo/
+!data/liss4_demo/**
