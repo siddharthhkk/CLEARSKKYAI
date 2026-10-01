@@ -16,7 +16,7 @@ from rasterio.enums import Resampling
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 INFERENCE_SCRIPT = PROJECT_ROOT / "scripts" / "infer_sentinel_dsen2cr.py"
-PUBLISHED_CHECKPOINT = PROJECT_ROOT / "weights" / "dsen2cr_sar_carl.pth"
+CLEARSKYAI_CHECKPOINT = PROJECT_ROOT / "weights" / "clearskkyai.pth"
 TRAINED_CHECKPOINT = PROJECT_ROOT / "weights" / "dsen2cr_sar_carl_trained.pth"
 GALLERY_MANIFEST = PROJECT_ROOT / "data" / "sentinel_demo" / "manifest.csv"
 MAX_PREVIEW_EDGE = 900
@@ -221,8 +221,8 @@ def render_sidebar(cases: list[dict]):
         key="input_mode",
     )
     checkpoint_options = {}
-    if checkpoint_ready(PUBLISHED_CHECKPOINT):
-        checkpoint_options["Published DSen2-CR pretrained weights"] = PUBLISHED_CHECKPOINT
+    if checkpoint_ready(CLEARSKYAI_CHECKPOINT):
+        checkpoint_options["ClearSky-AI trained model (clearskkyai.pth)"] = CLEARSKYAI_CHECKPOINT
     if checkpoint_ready(TRAINED_CHECKPOINT):
         checkpoint_options["Local PyTorch training run"] = TRAINED_CHECKPOINT
     if checkpoint_options:
@@ -232,7 +232,7 @@ def render_sidebar(cases: list[dict]):
         st.sidebar.info("Expected input: cloudy S2 + aligned S1 VV/VH → 13-band estimate")
     else:
         model_label = ""
-        checkpoint = PUBLISHED_CHECKPOINT
+        checkpoint = CLEARSKYAI_CHECKPOINT
         st.sidebar.error("Model weights are missing or still Git LFS pointers. Run `git lfs pull`.")
     if GALLERY_LFS_PENDING:
         st.sidebar.warning("Sample imagery is still stored as Git LFS pointers. Run `git lfs pull`.")
@@ -331,11 +331,11 @@ def render_sidebar(cases: list[dict]):
         )
     with st.sidebar.expander("Model and data attribution", expanded=False):
         st.markdown(
-            "The reconstruction weights are a published SAR-guided model checkpoint by "
-            "[Meraner et al. (2020)](https://github.com/ameraner/dsen2-cr). The sample "
-            "gallery is derived from the [SEN12MS-CR dataset](https://mediatum.ub.tum.de/1554803), "
-            "licensed CC BY 4.0. ClearSky-AI provides the demo, input handling, and evaluation "
-            "workflow; it did not train or author those released weights. This software is "
+            "The bundled `weights/clearskkyai.pth` checkpoint was trained for ClearSky-AI. "
+            "Its PyTorch network follows the SAR-guided DSen2-CR architecture described by "
+            "[Meraner et al. (2020)](https://github.com/ameraner/dsen2-cr). The sample gallery "
+            "is derived from the [SEN12MS-CR dataset](https://mediatum.ub.tum.de/1554803), "
+            "licensed CC BY 4.0. This software is "
             "distributed under GNU GPL-3.0, without warranty; see the repository `LICENSE` "
             "and `THIRD_PARTY_NOTICES.md` for terms and attribution."
         )

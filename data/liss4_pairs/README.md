@@ -1,6 +1,6 @@
 # LISS-IV paired training data
 
-`manifest.csv` is the input list for `scripts/train_liss4_paired.py`. It is a
+`manifest.csv` is the input list for `liss4/scripts/train_liss4_paired.py`. It is a
 header-only template until real cloudy/clear pairs are added. The trainer
 cannot start with an empty manifest.
 
@@ -31,5 +31,5 @@ as a validated training target without inspecting and explicitly accepting
 those limitations.
 
 For separate source bands, stack BAND2 (Green), BAND3 (Red), and BAND4 (NIR)
-for each acquisition with `scripts/stack_liss4_bands.py`. Make sure each
+for each acquisition with `liss4/scripts/stack_liss4_bands.py`. Make sure each
 cloudy/clear acquisition is already aligned to the same grid before training.

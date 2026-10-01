@@ -48,7 +48,7 @@ def main() -> None:
     parser.add_argument(
         "--output-dir", type=Path, default=PROJECT_ROOT / "data" / "eval" / "sentinel_demo"
     )
-    parser.add_argument("--checkpoint", type=Path, default=PROJECT_ROOT / "weights" / "dsen2cr_sar_carl.pth")
+    parser.add_argument("--checkpoint", type=Path, default=PROJECT_ROOT / "weights" / "clearskkyai.pth")
     parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
     args = parser.parse_args()
     if not args.manifest.is_file():

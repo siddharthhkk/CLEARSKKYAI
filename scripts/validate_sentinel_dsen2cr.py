@@ -1,4 +1,4 @@
-"""Small integration check for the published Sentinel DSen2-CR checkpoint."""
+"""Small integration check for the ClearSky-AI Sentinel DSen2-CR checkpoint."""
 
 from pathlib import Path
 import sys
@@ -30,9 +30,9 @@ def write_input(path, data, crs="EPSG:32632", transform=None):
 
 
 def main():
-    checkpoint = PROJECT_ROOT / "weights" / "dsen2cr_sar_carl.pth"
+    checkpoint = PROJECT_ROOT / "weights" / "clearskkyai.pth"
     if not checkpoint.is_file():
-        raise FileNotFoundError(f"Required local published checkpoint missing: {checkpoint}")
+        raise FileNotFoundError(f"Required ClearSky-AI checkpoint missing: {checkpoint}")
 
     optical = np.full((13, 33, 40), 2000, dtype=np.uint16)
     sar = np.zeros((2, 33, 40), dtype=np.float32)

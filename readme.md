@@ -22,16 +22,18 @@ Sentinel-2 image and a co-registered Sentinel-1 radar image, then estimates the
 cloud-free Sentinel-2 surface. It also preserves a separate, experimental
 LISS-IV research workflow.
 
-> **Model provenance:** The main Sentinel demo uses a published SAR + CARL
-> checkpoint converted to PyTorch. It is not a model trained by this project.
-> Reconstructions are estimates and can be wrong where clouds hide the ground.
+> **Model provenance:** `weights/clearskkyai.pth` is the ClearSky-AI-trained
+> Sentinel checkpoint. Its PyTorch network follows the DSen2-CR architecture
+> described by Meraner et al. (2020). Reconstructions are estimates and can be
+> wrong where clouds hide the ground.
 
 ## Explore
 
 [Quick start](#quick-start) · [Model flow](#model-flow) ·
 [Demo results](#demo-results) · [Training](#training) ·
 [LISS-IV research](#liss-iv-research-track) ·
-[Limitations](#limitations) · [Full technical guide](PROJECT_GUIDE.md)
+[Limitations](#limitations) · [LISS-IV folder guide](liss4/README.md) ·
+[Full technical guide](PROJECT_GUIDE.md)
 
 ## Model flow
 
@@ -42,7 +44,7 @@ transform. The model returns a 13-band estimate on the optical image's grid.
 flowchart LR
     S2["Cloudy Sentinel-2<br/>13 optical bands"] --> GRID["Grid checks<br/>and published scaling"]
     S1["Sentinel-1<br/>VV / VH backscatter"] --> GRID
-    GRID --> MODEL["PyTorch DSen2-CR<br/>published SAR + CARL checkpoint"]
+    GRID --> MODEL["ClearSky-AI-trained PyTorch model<br/>DSen2-CR architecture"]
     MODEL --> OUT["Estimated cloud-free Sentinel-2<br/>13-band GeoTIFF<br/>source georeferencing retained"]
     OUT -. "optional reference evaluation" .-> METRICS["PSNR · SSIM · MAE"]
     REF["Paired clear Sentinel-2<br/>used for training/evaluation"] --> METRICS
@@ -67,11 +69,12 @@ SEN12MS-CR subset:
 
 These are patch-level results from one dataset, not a benchmark or independent
 external validation. Clear references can come from a different acquisition
-date. See the [detailed evaluation notes](PROJECT_GUIDE.md#prepare-demo-examples-and-the-expanded-local-subset).
+date. See the
+[detailed evaluation notes](PROJECT_GUIDE.md#prepare-demo-examples-and-the-expanded-local-subset).
 
 ## Quick start
 
-The sample gallery and published checkpoint use Git LFS. Install Git LFS before
+The sample gallery and ClearSky-AI-trained checkpoint use Git LFS. Install Git LFS before
 cloning so the repository downloads the actual images and weights.
 
 ```powershell
@@ -88,8 +91,6 @@ input uses the 13 bands `B01, B02, B03, B04, B05, B06, B07, B08, B8A, B09,
 B10, B11, B12`. The radar input is a two-band Sentinel-1 GeoTIFF in `VV, VH`
 order with values in dB. Both rasters must use the same pixel grid.
 
-To open the preserved LISS-IV interface, run `streamlit run app_liss4.py`.
-That interface uses a separate three-band optical model.
 
 ## What is included
 
@@ -99,7 +100,7 @@ That interface uses a separate three-band optical model.
 | Tiled Sentinel inference | Writes a georeferenced 13-band reconstruction GeoTIFF |
 | PyTorch training workflow | Trains on paired SEN12MS-CR records when the source dataset is available |
 | Evaluation gallery | Browses cloudy input, estimate, clear reference, and per-patch metrics |
-| LISS-IV research track | Separate three-band interface, synthetic training experiments, and paired-training code |
+| LISS-IV research track | Separate [three-band interface, source, scripts, and guide](liss4/README.md) |
 
 ## Training
 
@@ -117,15 +118,16 @@ python train.py `
 
 The training workflow uses the dataset's train and validation splits and
 excludes its listed test split. It saves the best validation checkpoint, a
-resumable checkpoint, and an epoch history. Training is optional for the demo;
-the published checkpoint is included through Git LFS. See the
+resumable checkpoint, and an epoch history. Training is optional when using the
+bundled ClearSky-AI-trained checkpoint, which is included through Git LFS. See the
 [full training guide](PROJECT_GUIDE.md#train-the-pytorch-sentinel-model) for
 data preparation and resume options.
 
 ## LISS-IV research track
 
-The LISS-IV app and experiments are a separate, optical-only track. They use
-`[Green, Red, NIR]` bands (typically `BAND2`, `BAND3`, `BAND4`) and do not use
+The LISS-IV app and experiments are a separate, optical-only track under
+`liss4/src/` and `liss4/scripts/`. They use `[Green, Red, NIR]` bands
+(typically `BAND2`, `BAND3`, `BAND4`) and do not use
 Sentinel-1 SAR. The bundled LISS-IV checkpoint was trained with synthetic cloud
 corruption; its real-scene comparison uses a temporal reference and is not
 same-time ground truth.
@@ -164,14 +166,11 @@ and [DiffCR fine-tuning notes](PROJECT_GUIDE.md#fine-tune-the-linked-repos-pretr
 
 ## Research and license
 
-- [DSen2-CR project](https://github.com/ameraner/dsen2-cr)
 - [SEN12MS-CR dataset record](https://mediatum.ub.tum.de/1554803)
 - [AllClear dataset and benchmark](https://github.com/Zhou-Hangyu/allclear)
 - [DiffCR source repository](https://github.com/Zhou-Hangyu/DiffCR)
 
-ClearSky-AI is distributed under the [GNU GPL-3.0 license](LICENSE). The
-pretrained model and satellite data retain their respective source terms and
-attributions.
+ClearSky-AI is distributed under the [GNU GPL-3.0 license](LICENSE).
 
 ---
 

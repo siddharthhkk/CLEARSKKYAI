@@ -13,7 +13,7 @@ from rasterio.enums import Resampling
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-INFERENCE_SCRIPT = PROJECT_ROOT / "scripts" / "infer_liss4_real_cloudy_only_overlap.py"
+INFERENCE_SCRIPT = PROJECT_ROOT / "liss4" / "scripts" / "infer_liss4_real_cloudy_only_overlap.py"
 WEIGHTS_DIR = PROJECT_ROOT / "weights"
 DEMO_MANIFEST = PROJECT_ROOT / "data" / "liss4_demo" / "manifest.csv"
 MAX_PREVIEW_EDGE = 1200

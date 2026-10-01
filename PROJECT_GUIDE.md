@@ -2,9 +2,9 @@
 
 This guide preserves the project's detailed setup, data preparation, training, evaluation, and LISS-IV experiment notes. For the concise overview and quick start, see [readme.md](readme.md).
 
-The primary demo takes cloudy Sentinel-2 optical data plus co-registered Sentinel-1 VV/VH radar and produces a 13-band Sentinel-2 estimate. It integrates the published SAR + CARL checkpoint by Meraner et al. (2020); it is not a ClearSky-AI-trained model. The earlier LISS-IV experiments and app remain preserved as a separate research track.
+The primary demo takes cloudy Sentinel-2 optical data plus co-registered Sentinel-1 VV/VH radar and produces a 13-band Sentinel-2 estimate. It uses the ClearSky-AI-trained checkpoint at `weights/clearskkyai.pth`, with a PyTorch implementation of the SAR-guided DSen2-CR architecture described by Meraner et al. (2020). The earlier LISS-IV experiments and app remain preserved as a separate research track.
 
-This project owns the application, data preparation, and evaluation workflow, not the pretrained weights or their original architecture. Results are estimates and can hallucinate or miss surface detail hidden by clouds. See [Known limitations](readme.md#limitations) for the current evaluation scope.
+This project includes the trained Sentinel checkpoint, PyTorch training workflow, application, data preparation, and evaluation tools. The network architecture follows prior DSen2-CR research. Results are estimates and can hallucinate or miss surface detail hidden by clouds. See [Known limitations](readme.md#limitations) for the current evaluation scope.
 
 The software is distributed under GNU GPL-3.0; see [LICENSE](LICENSE). The sample dataset has its own attribution and terms described below.
 
@@ -28,7 +28,7 @@ streamlit run app.py
 
 The app accepts a 13-band cloudy Sentinel-2 GeoTIFF in `B01, B02, B03, B04, B05, B06, B07, B08, B8A, B09, B10, B11, B12` order plus a co-registered two-band Sentinel-1 GeoTIFF in `VV, VH` order, with SAR values in dB. Both files must use the same pixel grid, CRS, and affine transform. The output retains the optical grid and has 13 bands. The UI supports file uploads, local paths, or the prepared paired-sample gallery.
 
-The published SAR + CARL pretrained checkpoint is included in Git LFS at `weights/dsen2cr_sar_carl.pth`. It is the original authors' model converted to PyTorch, not a checkpoint trained by this project. The app reports when model or sample files are still Git LFS pointers and tells you to run `git lfs pull`. Its model selector also detects a separately trained local checkpoint at `weights/dsen2cr_sar_carl_trained.pth`.
+The ClearSky-AI-trained Sentinel checkpoint is included in Git LFS at `weights/clearskkyai.pth`. The app reports when model or sample files are still Git LFS pointers and tells you to run `git lfs pull`. Its model selector also detects an additional local PyTorch training run at `weights/dsen2cr_sar_carl_trained.pth`.
 
 Run the checkpoint/inference check and the synthetic, one-epoch training smoke test after setup:
 
@@ -51,7 +51,7 @@ python train.py `
   --epochs 8 --batch-size 1 --crop-size 128 --device auto
 ```
 
-The listed splits `1` and `2` are used for training and validation; listed test split `3` is excluded. The run writes the best validation checkpoint, a `*_latest.pth` resume checkpoint, and an epoch history CSV. For the command above, resume with `--resume weights\dsen2cr_sar_carl_trained_latest.pth`. The project gallery contains only 96 train-split illustrations from one scene and no validation split, so it is not a training substitute and must not be used to claim generalization. Training is optional for the demo: the included published baseline is ready for inference.
+The listed splits `1` and `2` are used for training and validation; listed test split `3` is excluded. The run writes the best validation checkpoint, a `*_latest.pth` resume checkpoint, and an epoch history CSV. For the command above, resume with `--resume weights\dsen2cr_sar_carl_trained_latest.pth`. The project gallery contains only 96 train-split illustrations from one scene and no validation split, so it is not a training substitute and must not be used to claim generalization. Training is optional for the demo: the included ClearSky-AI-trained checkpoint is ready for inference.
 
 ### Prepare demo examples and the expanded local subset
 
@@ -76,11 +76,11 @@ The app shows SAR, cloudy optical input, reconstruction, and paired clear refere
 
 Each case folder contains `cloudy_s2.tif` (13 optical bands), `sar_s1_vv_vh.tif` (two SAR bands), and `clear_s2_reference.tif` (paired target); `data/sentinel_demo/manifest.csv` records the split, season, scene, and relative paths.
 
-Labels are intentionally precise: the train-split examples demonstrate the model's training-data family, but do not prove that each exact patch appeared in the released checkpoint's training run. Test examples are from the dataset's ten published test scenes, absent from its listed training scenes; they are held-out examples from the same dataset, not an independent external dataset. Don't report a training-split score as held-out accuracy.
+Labels are intentionally precise: the train-split examples demonstrate the model's training-data family, but do not prove that each exact patch appeared in a training run. Test examples are from the dataset's ten published test scenes, absent from its listed training scenes; they are held-out examples from the same dataset, not an independent external dataset. Don't report a training-split score as held-out accuracy.
 
-The expanded 1,060-case run completed on the local pretrained checkpoint. Across the 964 test-split patches, mean per-patch PSNR was 17.25 dB for cloudy input and 27.65 dB for reconstruction (+10.40 dB mean gain); 960/964 patches improved. Mean output MAE was 0.03130 and RMSE 0.04527 (reflectance normalized to 0–1); output PSNR ranged from 18.50 to 44.18 dB. The four non-improving cases were all in summer scene 119, with PSNR changes from -0.27 to -0.71 dB. These are unweighted means of patch-level metrics, not a pooled benchmark; all test patches are from the same dataset and the clear references may differ in acquisition time. The 96 train-split examples are excluded from this held-out summary.
+The expanded 1,060-case run used the ClearSky-AI-trained checkpoint at `weights/clearskkyai.pth`. Across the 964 test-split patches, mean per-patch PSNR was 17.25 dB for cloudy input and 27.65 dB for reconstruction (+10.40 dB mean gain); 960/964 patches improved. Mean output MAE was 0.03130 and RMSE 0.04527 (reflectance normalized to 0–1); output PSNR ranged from 18.50 to 44.18 dB. The four non-improving cases were all in summer scene 119, with PSNR changes from -0.27 to -0.71 dB. These are unweighted means of patch-level metrics, not a pooled benchmark; all test patches are from the same dataset and the clear references may differ in acquisition time. The 96 train-split examples are excluded from this held-out summary.
 
-An earlier 24-patch held-out spot-check reported mean per-patch PSNR of 17.64 dB for cloudy input and 28.39 dB for reconstruction (+10.75 dB mean gain); all 24 patches improved. Its mean output MAE was 0.02985 and RMSE 0.04267. The three heavy-cloud cases and urban/built-up case in that spot-check scored as follows:
+An additional 24-patch held-out spot-check reported mean per-patch PSNR of 17.64 dB for cloudy input and 28.39 dB for reconstruction (+10.75 dB mean gain); all 24 patches improved. Its mean output MAE was 0.02985 and RMSE 0.04267. The three heavy-cloud cases and urban/built-up case in that spot-check scored as follows:
 
 | Held-out example | Annotated cloud | Cloudy PSNR | Output PSNR | Gain |
 |---|---:|---:|---:|---:|
@@ -161,17 +161,17 @@ The app uses this project's V3R checkpoint at `weights/liss4_dsen2cr_synthetic_v
 Run the self-contained checks. These create temporary fixtures and do not need Bhoonidhi, a downloaded dataset, or the trained checkpoint:
 
 ```sh
-python scripts/validate_liss4_setup.py
-python scripts/validate_liss4_data_prep.py
-python scripts/validate_liss4_training.py
-python scripts/validate_liss4_inference.py
+python liss4/scripts/validate_liss4_setup.py
+python liss4/scripts/validate_liss4_data_prep.py
+python liss4/scripts/validate_liss4_training.py
+python liss4/scripts/validate_liss4_inference.py
 ```
 
 For a real inference run, provide a three-band GeoTIFF in `[Green, Red, NIR]` order and a local model checkpoint:
 
 ```sh
-python scripts/inspect_liss4.py path/to/cloudy_liss4.tif
-python scripts/infer_liss4_real_cloudy_only_overlap.py \
+python liss4/scripts/inspect_liss4.py path/to/cloudy_liss4.tif
+python liss4/scripts/infer_liss4_real_cloudy_only_overlap.py \
   --checkpoint weights/liss4_dsen2cr_synthetic_v3r.pth \
   --cloudy path/to/cloudy_liss4.tif \
   --output data/eval/reconstructed.tif \
@@ -183,7 +183,7 @@ The inference command accepts `auto`, `cpu`, or `cuda`. It writes a georeference
 For products delivered as three separate, co-registered single-band files, pass the files in Green, Red, NIR order (typically `BAND2`, `BAND3`, `BAND4`) instead of creating a stacked intermediate:
 
 ```sh
-python scripts/infer_liss4_real_cloudy_only_overlap.py \
+python liss4/scripts/infer_liss4_real_cloudy_only_overlap.py \
   --checkpoint weights/liss4_dsen2cr_synthetic_v3r.pth \
   --cloudy-bands path/to/BAND2.tif path/to/BAND3.tif path/to/BAND4.tif \
   --output data/eval/reconstructed.tif \
@@ -210,7 +210,7 @@ val/cloudy_scene_03.tif,val/clear_scene_03.tif,scene_03,val,
 Paths in the manifest are relative to `manifest.csv`. For a three-band image, the first three raster bands must be Green, Red, and NIR. Both train and val rows are required. If your source delivers separate `BAND2`, `BAND3`, and `BAND4` files, create a stack for each cloudy or clear scene with the windowed helper:
 
 ```sh
-python scripts/stack_liss4_bands.py \
+python liss4/scripts/stack_liss4_bands.py \
   --green data/raw/scene/BAND2.tif \
   --red data/raw/scene/BAND3.tif \
   --nir data/raw/scene/BAND4.tif \
@@ -222,7 +222,7 @@ Run it once for each cloudy and clear acquisition. It checks that all three band
 Start a training run from the repository root:
 
 ```sh
-python scripts/train_liss4_paired.py \
+python liss4/scripts/train_liss4_paired.py \
   --manifest data/liss4_pairs/manifest.csv \
   --patch-size 256 --stride 192 \
   --epochs 30 --batch-size 1 \
@@ -246,7 +246,7 @@ git clone https://github.com/Zhou-Hangyu/DiffCR.git external/DiffCR
 Then train from the same paired-image manifest, initializing from those weights:
 
 ```sh
-python scripts/train_liss4_paired.py \
+python liss4/scripts/train_liss4_paired.py \
   --manifest data/liss4_pairs/manifest.csv \
   --model-type diffcr-transfer \
   --diffcr-root external/DiffCR \
@@ -263,20 +263,20 @@ The adapter checks checkpoint tensor shapes before loading and stops if less tha
 The preparation pipeline can start from any suitable stacked three-band clear LISS-IV GeoTIFF; no Bhoonidhi data or existing NPZ cache is required. For example, this project has a local 1024×1024 Guwahati clear image:
 
 ```sh
-python scripts/extract_liss4_clear_patches.py \
+python liss4/scripts/extract_liss4_clear_patches.py \
   data/raw/clear/guwahati_clear.tif \
   --output data/synthetic_pretrain_clear \
   --patch-size 256 --stride 128
 
-python scripts/make_liss4_synthetic_pretrain_v3r_from_npz.py \
+python liss4/scripts/make_liss4_synthetic_pretrain_v3r_from_npz.py \
   --manifest data/synthetic_pretrain_clear/manifest.csv \
   --output data/synthetic_pretrain_v3r_from_guwahati
 
-python scripts/split_liss4_synthetic_manifest.py \
+python liss4/scripts/split_liss4_synthetic_manifest.py \
   --manifest data/synthetic_pretrain_v3r_from_guwahati/manifest.csv \
   --scene-width 1024 --val-fraction 0.25
 
-python scripts/validate_liss4_synthetic_pretrain.py \
+python liss4/scripts/validate_liss4_synthetic_pretrain.py \
   --manifest data/synthetic_pretrain_v3r_from_guwahati/manifest.csv \
   --samples-dir data/synthetic_pretrain_v3r_from_guwahati
 ```
@@ -286,7 +286,7 @@ The extractor refuses to overwrite existing generated files unless `--overwrite`
 Train from those split manifests with:
 
 ```sh
-python scripts/train_liss4_synthetic.py \
+python liss4/scripts/train_liss4_synthetic.py \
   --manifest data/synthetic_pretrain_v3r_from_guwahati/manifest.csv \
   --train-manifest data/synthetic_pretrain_v3r_from_guwahati/train_manifest.csv \
   --val-manifest data/synthetic_pretrain_v3r_from_guwahati/val_manifest.csv \
@@ -310,7 +310,7 @@ The source `BAND_META.txt` identifies the OTS product and acquisition. Its `ACC_
 Recreate the local dataset when the source product is present:
 
 ```sh
-python scripts/extract_liss4_clear_patches.py \
+python liss4/scripts/extract_liss4_clear_patches.py \
   --clear-bands \
   data/raw/bhoonidhi_liss4/R2F01NOV2023065046011000054SSANSTUC00GTDB/BAND2.tif \
   data/raw/bhoonidhi_liss4/R2F01NOV2023065046011000054SSANSTUC00GTDB/BAND3.tif \
@@ -319,11 +319,11 @@ python scripts/extract_liss4_clear_patches.py \
   --patch-size 256 --stride 512 \
   --max-strict-cloud-proxy-fraction 0.005
 
-python scripts/make_liss4_synthetic_pretrain_v3r_from_npz.py \
+python liss4/scripts/make_liss4_synthetic_pretrain_v3r_from_npz.py \
   --manifest data/synthetic_pretrain_clear_bhoonidhi_11054_2023-11-01/manifest.csv \
   --output data/synthetic_pretrain_v3r_bhoonidhi_11054_2023-11-01
 
-python scripts/split_liss4_synthetic_manifest.py \
+python liss4/scripts/split_liss4_synthetic_manifest.py \
   --manifest data/synthetic_pretrain_v3r_bhoonidhi_11054_2023-11-01/manifest.csv \
   --scene-width 18343 --val-fraction 0.20
 ```
@@ -331,7 +331,7 @@ python scripts/split_liss4_synthetic_manifest.py \
 Train or continue the expanded experiment with repeatable train and validation manifest options. The local run continued the epoch-16 baseline to epoch 20, using a fresh optimizer at `5e-5`; the trainer resets best-checkpoint selection when the validation source changes and records dataset/configuration provenance in the checkpoint:
 
 ```sh
-python scripts/train_liss4_synthetic.py \
+python liss4/scripts/train_liss4_synthetic.py \
   --train-manifest data/synthetic_pretrain_v3r/train_manifest.csv \
   --train-manifest data/synthetic_pretrain_v3r_bhoonidhi_11054_2023-11-01/train_manifest.csv \
   --val-manifest data/synthetic_pretrain_v3r/val_manifest.csv \
@@ -346,12 +346,12 @@ python scripts/train_liss4_synthetic.py \
 Compare both checkpoints on the same combined synthetic validation set with:
 
 ```sh
-python scripts/evaluate_liss4_synthetic_checkpoint.py \
+python liss4/scripts/evaluate_liss4_synthetic_checkpoint.py \
   --checkpoint weights/liss4_dsen2cr_synthetic_v3r.pth \
   --manifest data/synthetic_pretrain_v3r/val_manifest.csv \
   --manifest data/synthetic_pretrain_v3r_bhoonidhi_11054_2023-11-01/val_manifest.csv
 
-python scripts/evaluate_liss4_synthetic_checkpoint.py \
+python liss4/scripts/evaluate_liss4_synthetic_checkpoint.py \
   --checkpoint weights/liss4_dsen2cr_synthetic_v3r_multiscene.pth \
   --manifest data/synthetic_pretrain_v3r/val_manifest.csv \
   --manifest data/synthetic_pretrain_v3r_bhoonidhi_11054_2023-11-01/val_manifest.csv
@@ -364,7 +364,7 @@ The raw Bhoonidhi product, generated NPZs, and checkpoints remain local and are 
 When the local cloudy/clear pair and checkpoints are available, evaluate the output against the temporal clear reference:
 
 ```sh
-python scripts/evaluate_liss4_real_multimetric.py \
+python liss4/scripts/evaluate_liss4_real_multimetric.py \
   --cloudy data/raw/cloudy/guwahati_cloudy_test.tif \
   --clear data/raw/clear/guwahati_clear.tif \
   --v2 data/eval/guwahati_liss4_v3r_baseline_recheck.tif \
@@ -380,9 +380,9 @@ The evaluator reports MAE, RMSE, PSNR, per-band SSIM, and spectral angle mapper 
 Bhoonidhi products are kept local and ignored by Git. This checkout has a small locally downloaded Resourcesat-2 LISS-IV set; the existing tools can scan products, compare cloudiness heuristics, inspect overlaps, create previews, and run the V3R stress test:
 
 ```sh
-python scripts/scan_bhoonidhi_liss4.py
-python scripts/find_bhoonidhi_liss4_pairs.py
-python scripts/compare_bhoonidhi_11054_cloudiness.py
+python liss4/scripts/scan_bhoonidhi_liss4.py
+python liss4/scripts/find_bhoonidhi_liss4_pairs.py
+python liss4/scripts/compare_bhoonidhi_11054_cloudiness.py
 ```
 
 Pair-specific commands are available in each script's `--help`. Cloudiness comparisons are heuristics for candidate screening, not native cloud masks or accuracy claims.
@@ -392,7 +392,7 @@ Pair-specific commands are available in each script's `--help`. Cloudiness compa
 - The primary Sentinel demo requires 13 co-registered Sentinel-2 bands and two co-registered Sentinel-1 bands; see [Start here](#start-here-sentinel-reconstruction-demo).
 - The legacy LISS-IV interface accepts a stacked three-band GeoTIFF or three co-registered single-band files in `[Green, Red, NIR]` order.
 - Native LISS-IV processing uses one fixed `dn_max=1023`; per-image min/max normalization is intentionally avoided.
-- Inspect unfamiliar products with `scripts/inspect_liss4.py` before inference or training.
+- Inspect unfamiliar products with `liss4/scripts/inspect_liss4.py` before inference or training.
 - Train/clear pairs must be co-registered on an identical grid. The paired dataset loader rejects grid mismatches.
 - Real temporal pairs are references, not pixel-perfect ground truth.
 - Local `data/` is excluded from Git; only the demo Sentinel samples and the documented model checkpoints are versioned through Git LFS. Other local experiment checkpoints remain ignored.
@@ -407,27 +407,27 @@ Pair-specific commands are available in each script's `--help`. Cloudiness compa
 - `scripts/prepare_sen12mscr_demo.py`: selected public SEN12MS-CR gallery preparation
 - `scripts/evaluate_sen12mscr_demo.py`: per-case metrics on prepared reference pairs
 - `scripts/validate_sentinel_dsen2cr.py`: checkpoint and integration smoke check
-- `src/liss4.py`, `src/liss4_dsen2cr.py`: legacy LISS-IV DN normalization and custom model
-- `src/liss4_dataset.py`, `src/liss4_patch_dataset.py`, `src/liss4_window_dataset.py`: paired and patch data loaders
-- `src/liss4_diffcr_transfer.py`: optional DiffCR pretrained-weight adapter for LISS-IV fine-tuning
-- `scripts/extract_liss4_clear_patches.py`: clear GeoTIFF to NPZ source patches
-- `scripts/make_liss4_synthetic_pretrain_v3r_from_npz.py`: V3R synthetic corruption
-- `scripts/train_liss4_synthetic.py`, `scripts/train_liss4_paired.py`: synthetic and paired-image training/checkpoint writing
-- `scripts/evaluate_liss4_synthetic_checkpoint.py`: same-split synthetic checkpoint comparison
-- `scripts/infer_liss4_real_cloudy_only_overlap.py`: tiled GeoTIFF inference
-- `scripts/stack_liss4_bands.py`: stream separate LISS-IV bands into a three-band stack
-- `scripts/evaluate_liss4_real_multimetric.py`: quantitative temporal-reference metrics
-- `scripts/validate_liss4_*.py`: setup, data, training, and inference checks
+- `liss4/src/liss4.py`, `liss4/src/liss4_dsen2cr.py`: legacy LISS-IV DN normalization and custom model
+- `liss4/src/liss4_dataset.py`, `liss4/src/liss4_patch_dataset.py`, `liss4/src/liss4_window_dataset.py`: paired and patch data loaders
+- `liss4/src/liss4_diffcr_transfer.py`: optional DiffCR pretrained-weight adapter for LISS-IV fine-tuning
+- `liss4/scripts/extract_liss4_clear_patches.py`: clear GeoTIFF to NPZ source patches
+- `liss4/scripts/make_liss4_synthetic_pretrain_v3r_from_npz.py`: V3R synthetic corruption
+- `liss4/scripts/train_liss4_synthetic.py`, `liss4/scripts/train_liss4_paired.py`: synthetic and paired-image training/checkpoint writing
+- `liss4/scripts/evaluate_liss4_synthetic_checkpoint.py`: same-split synthetic checkpoint comparison
+- `liss4/scripts/infer_liss4_real_cloudy_only_overlap.py`: tiled GeoTIFF inference
+- `liss4/scripts/stack_liss4_bands.py`: stream separate LISS-IV bands into a three-band stack
+- `liss4/scripts/evaluate_liss4_real_multimetric.py`: quantitative temporal-reference metrics
+- `liss4/scripts/validate_liss4_*.py`: setup, data, training, and inference checks
 
-The published Sentinel-2 checkpoint is included in Git LFS, alongside the separately documented project-trained LISS-IV checkpoint. The original authors' repository documents the Sentinel model and preprocessing lineage; SEN12MS-CR publishes the paired S1/cloudy-S2/clear-S2 data used for that task. Cite the [original model project](https://github.com/ameraner/dsen2-cr) and [SEN12MS-CR record](https://mediatum.ub.tum.de/1554803) when presenting the Sentinel-2 project.
+The ClearSky-AI-trained Sentinel checkpoint is included in Git LFS, alongside the separately documented project-trained LISS-IV checkpoint. Cite the DSen2-CR publication and [original model project](https://github.com/ameraner/dsen2-cr) for architecture and preprocessing. The [SEN12MS-CR record](https://mediatum.ub.tum.de/1554803) describes the paired S1/cloudy-S2/clear-S2 dataset used by this workflow.
 
 ## Known limitations
 
-- The published model reconstructs rather than observes hidden surface detail; the estimate can be inaccurate, especially under thick cloud, haze, snow, or domain shift.
+- The model reconstructs rather than observes hidden surface detail; the estimate can be inaccurate, especially under thick cloud, haze, snow, or domain shift.
 - The prepared gallery comes from one dataset. Its test scenes are held-out examples, not independent external validation; the train-split example is not a held-out score.
 - User-supplied scenes must already match the model's optical order and reflectance scaling, SAR VV/VH order and dB scaling, and exact pixel grid.
 - The complete SEN12MS-CR archive is 272 GB; the optional local gallery is only a small subset and its mirror omits georeferencing.
-- No claim is made that these published weights are locally retrained, optimal for Indian imagery, or suitable for LISS-IV.
+- The current evaluation does not establish generalization to Indian regions or LISS-IV.
 - Large Sentinel rasters use overlapping tiles but currently allocate output-sized blending buffers; begin with gallery patches or modest test rasters.
 
 ### Historical LISS-IV limitations

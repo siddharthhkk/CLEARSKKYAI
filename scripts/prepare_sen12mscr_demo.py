@@ -222,8 +222,8 @@ def write_case(
         write_raster(paths["clear_target"], clear, OPTICAL_BANDS)
 
     note = (
-        "Source dataset's train split; the released checkpoint was trained on SEN12MS-CR, "
-        "but this does not assert that this exact patch appeared in its training run."
+        "Source dataset's train split; treat this as a training-split illustration, not "
+        "an independent held-out evaluation sample."
         if split == "train"
         else "Official source dataset test split, in a scene absent from its listed train scenes."
     )

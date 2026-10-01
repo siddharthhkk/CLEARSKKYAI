@@ -155,13 +155,13 @@ def convert(src, dst):
 
 def main():
     p = argparse.ArgumentParser(
-        description="Convert the public DSen2-CR Keras HDF5 checkpoint to PyTorch."
+        description="Convert a public DSen2-CR Keras HDF5 checkpoint to a separate PyTorch reference file."
     )
     p.add_argument("--src", required=True, help="Path to model_SARcarl.hdf5")
     p.add_argument(
         "--dst",
-        default=str(PROJECT_ROOT / "weights" / "dsen2cr_sar_carl.pth"),
-        help="Output PyTorch state-dict path.",
+        default=str(PROJECT_ROOT / "weights" / "dsen2cr_sar_carl_converted.pth"),
+        help="Output path for converted reference weights; does not overwrite clearskkyai.pth.",
     )
     args = p.parse_args()
 

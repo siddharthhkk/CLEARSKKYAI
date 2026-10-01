@@ -1,4 +1,4 @@
-"""Run the published SAR-fusion DSen2-CR checkpoint on co-registered rasters."""
+"""Run the ClearSky-AI-trained, SAR-guided DSen2-CR model on co-registered rasters."""
 
 from __future__ import annotations
 
@@ -194,7 +194,7 @@ def main() -> None:
     parser.add_argument(
         "--checkpoint",
         type=Path,
-        default=PROJECT_ROOT / "weights" / "dsen2cr_sar_carl.pth",
+        default=PROJECT_ROOT / "weights" / "clearskkyai.pth",
     )
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--tile", type=int, default=256)
